@@ -1,0 +1,1043 @@
+<!doctype html>
+<html lang="en" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="google" content="notranslate">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.ico">
+<title>FrøstRGB</title>
+<style>
+  :root {
+    --bg: #06080c; --p1: #0b0f15; --p2: #10161f; --p3: #17202c; --line: #1a2330; --line2: #263244;
+    --text: #e6edf6; --muted: #8391a5; --dim: #4f5b6c;
+    --accent: #5ce1ff; --accent2: #8b9dff; --soft: rgba(92, 225, 255, .1); --ok: #3ee69a; --bad: #ff5d6c; --warn: #ffc451;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+         -webkit-font-smoothing: antialiased; overflow: hidden; user-select: none; -webkit-user-drag: none; }
+  input[type=text], .hex { user-select: text; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  img, canvas { -webkit-user-drag: none; }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; } ::-webkit-scrollbar-thumb { background: var(--p3); border-radius: 8px; } ::-webkit-scrollbar-track { background: transparent; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .shell { height: 100vh; display: grid; grid-template-rows: 54px 42px minmax(0, 1fr) 28px; }
+
+  /* title bar */
+  .top { display: flex; align-items: center; gap: 18px; padding: 0 18px; background: linear-gradient(180deg, #0c1219, #090d13); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .16em; font-size: 14px; }
+  .brand img { width: 26px; height: 26px; }
+  .brand span { background: linear-gradient(90deg, #fff, var(--accent)); -webkit-background-clip: text; color: transparent; }
+  .device { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--p1); }
+  .device b { font-weight: 600; font-size: 12.5px; } .device small { color: var(--muted); font-size: 11.5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .top .grow { flex: 1; }
+  .bright { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+  .bright input { width: 140px; } .bright .v { width: 36px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .power { width: 36px; height: 36px; border-radius: 9px; border: 1px solid var(--line); background: var(--p1); display: grid; place-items: center; color: var(--muted); }
+  .power.on { color: var(--accent); border-color: rgba(92,225,255,.45); background: var(--soft); box-shadow: 0 0 14px rgba(92,225,255,.15); }
+
+  /* nav */
+  nav { display: flex; align-items: stretch; padding: 0 10px; background: var(--p1); border-bottom: 1px solid var(--line); }
+  nav button { background: none; border: 0; padding: 0 18px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; position: relative; display: flex; align-items: center; gap: 8px; }
+  nav button:hover { color: var(--text); }
+  nav button[aria-selected="true"] { color: #fff; }
+  nav button[aria-selected="true"]::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .live { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* body: list | device | options */
+  .main { display: grid; grid-template-columns: 290px minmax(0, 1fr) 350px; min-height: 0; }
+  .main.wide { grid-template-columns: minmax(0, 1fr); }
+  .main.wide > aside { display: none; }
+  aside { background: var(--p1); overflow-y: auto; min-height: 0; }
+  aside.left { border-right: 1px solid var(--line); } aside.right { border-left: 1px solid var(--line); }
+  .center { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: radial-gradient(ellipse at 50% 45%, #0f1824 0%, var(--bg) 70%); }
+  .stage { flex: 1; min-height: 220px; display: grid; place-items: center; position: relative; }
+  .main.wide .stage { flex: 0 0 300px; }
+  .stage-hint { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: var(--dim); font-size: 11.5px; pointer-events: none; }
+  .stage.editing #kb { cursor: crosshair; }
+  #kb { display: block; touch-action: none; filter: drop-shadow(0 24px 40px rgba(0,0,0,.55)); }
+
+  [data-panel] { display: none !important; }
+  [data-panel].show { display: block !important; }
+  .ctool[data-panel].show { display: flex !important; }
+
+  .sec { padding: 16px 16px 18px; border-bottom: 1px solid var(--line); }
+  .sec:last-child { border-bottom: 0; }
+  .sec h3 { margin: 0 0 12px; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+            display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+  .sec h3 > span:first-child { display: flex; align-items: center; gap: 8px; }
+  .sec h3 > span:first-child::before { content: ""; width: 3px; height: 12px; background: var(--accent); border-radius: 2px; }
+  .title { font-size: 18px; font-weight: 600; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+
+  .search { width: 100%; background: var(--p2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--p2); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; color: var(--muted); font-size: 11.5px; }
+  .chip:hover { color: var(--text); border-color: var(--line2); }
+  .chip[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--soft); }
+  .group { margin: 14px 0 6px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 700; }
+
+  .list { display: flex; flex-direction: column; gap: 2px; }
+  .item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 7px 8px; position: relative; cursor: pointer; }
+  .item:hover { background: var(--p2); }
+  .item.on { background: var(--soft); border-color: rgba(92,225,255,.35); }
+  .item.on::before { content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .item .sw4 { width: 30px; height: 30px; border-radius: 7px; flex: none; border: 1px solid rgba(255,255,255,.06); }
+  .item .tx { flex: 1; min-width: 0; }
+  .item .tx b { display: block; font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .tx small { display: block; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid rgba(92,225,255,.3); border-radius: 4px; padding: 0 5px; flex: none; }
+  .fav { color: var(--dim); background: none; border: 0; padding: 3px; display: grid; place-items: center; }
+  .fav:hover { color: var(--text); } .fav.on { color: #ffd166; } .fav.on svg { fill: currentColor; }
+
+  .params { display: flex; flex-direction: column; gap: 16px; }
+  .prow > .lab { display: flex; justify-content: space-between; color: var(--muted); font-size: 11.5px; margin-bottom: 7px; letter-spacing: .03em; }
+  .prow > .lab .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  input[type=color] { width: 34px; height: 34px; border: 1px solid var(--line2); border-radius: 8px; background: none; padding: 2px; cursor: pointer; }
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; } input[type=color]::-webkit-color-swatch { border: 0; border-radius: 6px; }
+  .pals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .pal { border: 1px solid var(--line); border-radius: 7px; padding: 0; background: var(--p2); overflow: hidden; text-align: left; }
+  .pal i { display: block; height: 14px; }
+  .pal span { display: block; padding: 3px 7px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pal[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); } .pal[aria-pressed="true"] span { color: var(--text); }
+  .dirs { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dirs button { background: var(--p2); border: 1px solid var(--line); border-radius: 7px; height: 30px; display: grid; place-items: center; color: var(--muted); }
+  .dirs button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--soft); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { white-space: nowrap; background: var(--p2); border: 1px solid var(--line2); border-radius: 7px; padding: 6px 11px; display: inline-flex; gap: 7px; align-items: center; color: var(--text); font-size: 12px; }
+  .btn:hover { border-color: #3a4a60; background: var(--p3); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #031018; font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .btn.ghost { background: none; border-color: transparent; color: var(--muted); } .btn.ghost:hover { color: var(--text); background: var(--p2); }
+  .btn.danger { color: var(--bad); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .icon { background: none; border: 0; padding: 4px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; }
+  .icon:hover { color: var(--text); background: var(--p3); } .icon.off { color: var(--dim); } .icon:disabled { opacity: .3; }
+  input[type=text], select { background: var(--p2); border: 1px solid var(--line2); border-radius: 7px; padding: 7px 9px; width: 100%; }
+  select option, select optgroup { background: var(--p2); }
+  .seg { display: inline-flex; background: var(--p2); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; }
+  .seg button { background: none; border: 0; padding: 5px 12px; border-radius: 6px; color: var(--muted); font-size: 12px; }
+  .seg button[aria-pressed="true"] { background: var(--p3); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+  .switch { position: relative; width: 36px; height: 20px; flex: none; display: inline-block; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+  .switch span { position: absolute; inset: 0; border-radius: 99px; background: var(--p3); transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(16px); background: #031018; }
+  .empty { color: var(--dim); font-size: 12px; }
+  .count { color: var(--muted); font-size: 12px; margin: 10px 0; }
+
+  /* studio toolbar above the keyboard */
+  .ctool { align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(11,15,21,.7); flex-wrap: wrap; }
+  .tools { display: flex; gap: 4px; }
+  .tool { background: var(--p2); border: 1px solid var(--line); border-radius: 7px; width: 38px; height: 34px; display: grid; place-items: center; color: var(--muted); position: relative; }
+  .tool:hover { color: var(--text); }
+  .tool[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--soft); }
+  .tool kbd { position: absolute; right: 3px; bottom: 1px; font-size: 8.5px; color: var(--dim); font-family: inherit; }
+  .vsep { width: 1px; height: 26px; background: var(--line2); }
+  .hex { width: 84px; background: var(--p2); border: 1px solid var(--line2); border-radius: 7px; padding: 6px 8px; font-family: ui-monospace, Consolas, monospace; text-transform: uppercase; font-size: 12px; }
+  .swatches { display: flex; gap: 4px; flex-wrap: wrap; }
+  .sw { width: 20px; height: 20px; border-radius: 5px; border: 1px solid rgba(255,255,255,.1); padding: 0; }
+  .sw:hover { transform: scale(1.12); }
+
+  /* music strip under the keyboard */
+  .specbox { padding: 12px 18px 14px; border-top: 1px solid var(--line); background: rgba(11,15,21,.7); }
+  .specrow { display: grid; grid-template-columns: minmax(0, 1fr) 14px; gap: 14px; align-items: end; }
+  #spec { width: 100%; height: 96px; display: block; }
+  .meter { height: 96px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .meter .tube { flex: 1; width: 6px; border-radius: 3px; background: var(--p3); position: relative; overflow: hidden; }
+  .meter .fill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(0deg, var(--accent2), var(--accent)); }
+  .beat { width: 10px; height: 10px; border-radius: 50%; background: var(--p3); transition: background .08s, box-shadow .08s; }
+  .beat.on { background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+  .note { color: var(--dim); font-size: 11.5px; margin-top: 6px; }
+
+  /* layers */
+  .layer { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 8px; background: var(--p2); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+  .layer.active { border-color: rgba(92,225,255,.5); background: var(--soft); }
+  .layer .nm { flex: 1; min-width: 0; }
+  .layer .nm b { display: block; font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .layer .nm small { color: var(--muted); font-size: 11px; }
+  .layer .thumb { width: 22px; height: 22px; border-radius: 5px; flex: none; }
+
+  /* palettes */
+  .preview-strip { height: 40px; border-radius: 8px; margin-bottom: 14px; }
+  .stops { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .stop { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+
+  /* settings page */
+  .page { overflow-y: auto; flex: 1; padding: 20px 24px 28px; border-top: 1px solid var(--line); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: start; max-width: 1400px; margin: 0 auto; }
+  .card { background: var(--p1); border: 1px solid var(--line); border-radius: 10px; }
+  .setting { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+  .setting small { display: block; color: var(--muted); font-size: 11.5px; }
+  .setting + .setting { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+  /* chroma */
+  .drop { border: 1px dashed var(--line2); border-radius: 9px; padding: 14px; text-align: center; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .drop b { color: var(--text); }
+  .dragging .drop, body.dragging .stage { outline: 2px dashed var(--accent); outline-offset: -8px; }
+  .info { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12px; } .info span:nth-child(odd) { color: var(--muted); }
+
+  /* status bar */
+  .status { display: flex; align-items: center; gap: 18px; padding: 0 14px; background: #080b10; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+  .status .st { display: inline-flex; align-items: center; gap: 6px; }
+  .status .grow { flex: 1; }
+  .status .dot { width: 6px; height: 6px; }
+
+  .toast { position: fixed; bottom: 42px; left: 50%; transform: translateX(-50%) translateY(16px); background: var(--p3); border: 1px solid var(--line2); padding: 9px 14px; border-radius: 8px; opacity: 0; transition: .2s; pointer-events: none; z-index: 9; }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  @media (max-width: 1150px) { .main { grid-template-columns: 250px minmax(0, 1fr) 300px; } .bright input { width: 90px; } .device small { display: none; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="brand"><img src="/favicon.ico" alt=""><span>FRØSTRGB</span></div>
+    <div class="device"><i class="dot" id="kbDot"></i><div><b>SKYLOONG GK104 Pro</b> <small id="kbText">Connecting…</small></div></div>
+    <div class="grow"></div>
+    <label class="bright" title="Brightness">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <input type="range" id="brightness" min="0" max="100" step="1" aria-label="Brightness"><span class="v" id="brightV"></span>
+    </label>
+    <button class="power" id="power" title="Lighting on/off" aria-label="Turn lighting on or off">
+      <svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 7.3a8 8 0 1 0 11.4 0"/></svg>
+    </button>
+  </header>
+
+  <nav role="tablist">
+    <button role="tab" data-tab="lighting">Lighting<i class="live" data-live="effect"></i></button>
+    <button role="tab" data-tab="music">Music Sync<i class="live" data-live="music"></i></button>
+    <button role="tab" data-tab="studio">Studio<i class="live" data-live="editor"></i></button>
+    <button role="tab" data-tab="chroma">Chroma<i class="live" data-live="animation"></i></button>
+    <button role="tab" data-tab="devices">PC Sync<i class="live" id="rgbLive" style="display:none"></i></button>
+    <button role="tab" data-tab="palettes">Palettes</button>
+    <button role="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <div class="main" id="main">
+    <aside class="left">
+      <div data-panel="lighting">
+        <div class="sec">
+          <h3><span>Effects</span></h3>
+          <input class="search" id="fxSearch" type="text" placeholder="Search effects" aria-label="Search effects" spellcheck="false">
+          <div class="chips" id="fxCats"></div>
+          <div id="effectList"></div>
+        </div>
+      </div>
+      <div data-panel="music">
+        <div class="sec"><h3><span>Sync modes</span></h3><div class="list" id="musicList"></div></div>
+      </div>
+      <div data-panel="studio">
+        <div class="sec">
+          <h3><span>Layers</span><span class="row" style="gap:2px">
+            <button class="icon" id="undo" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+            <button class="icon" id="redo" title="Redo (Ctrl+Y)" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
+            <button class="icon" id="dupLayer" title="Duplicate layer" aria-label="Duplicate layer"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+          </span></h3>
+          <div class="list" id="layerList" style="gap:5px"></div>
+          <div class="row" style="margin-top:10px;flex-wrap:nowrap">
+            <select id="newType" aria-label="New layer type"></select>
+            <button class="btn" id="addLayer">+ Layer</button>
+          </div>
+        </div>
+        <div class="sec">
+          <h3><span>Profiles</span></h3>
+          <div class="row" style="flex-wrap:nowrap"><select id="profileSel" aria-label="Profiles"></select>
+            <button class="btn" id="profileLoad">Load</button><button class="icon" id="profileDel" title="Delete profile" aria-label="Delete profile"></button></div>
+          <div class="row" style="margin-top:8px;flex-wrap:nowrap"><input type="text" id="profileName" placeholder="Profile name" maxlength="40" aria-label="Profile name" spellcheck="false">
+            <button class="btn primary" id="profileSave">Save</button></div>
+        </div>
+      </div>
+      <div data-panel="chroma">
+        <div class="sec">
+          <h3><span>Animation library</span><button class="btn primary" id="animImport">Import</button></h3>
+          <div class="drop"><b>Drop .ChromaEffects or .chroma files</b> anywhere on this window, or use Import.<br>Synapse Chroma Studio effects and Chroma Editor animations.</div>
+          <input type="file" id="animFile" accept=".chroma,.chromaeffects" multiple hidden>
+          <div class="list" id="animList"></div>
+        </div>
+      </div>
+      <div data-panel="devices">
+        <div class="sec"><h3><span>PC devices</span></h3><div class="list" id="rgbList"></div></div>
+      </div>
+      <div data-panel="palettes">
+        <div class="sec"><h3><span>Palettes</span><button class="btn" id="palNew">+ New</button></h3><div class="list" id="palList"></div></div>
+      </div>
+    </aside>
+
+    <section class="center">
+      <div class="ctool" data-panel="studio">
+        <div class="tools" id="tools"></div>
+        <div class="vsep"></div>
+        <input type="color" id="brushColor" aria-label="Brush color">
+        <input class="hex" id="brushHex" maxlength="7" aria-label="Brush color hex" spellcheck="false">
+        <div class="swatches" id="swatches"></div>
+        <div class="vsep"></div>
+        <div class="swatches" id="recent" title="Recent colors"></div>
+      </div>
+      <div class="stage" id="stage">
+        <canvas id="kb" aria-label="Live keyboard preview"></canvas>
+        <div class="stage-hint" id="stageHint"></div>
+      </div>
+      <div class="specbox" data-panel="music">
+        <div class="specrow">
+          <canvas id="spec" aria-label="Audio spectrum"></canvas>
+          <div class="meter"><div class="beat" id="beat"></div><div class="tube"><div class="fill" id="level"></div></div></div>
+        </div>
+        <div class="note" id="audioNote">Play some music to see the spectrum.</div>
+      </div>
+      <div class="page" data-panel="settings">
+        <div class="cards">
+          <div class="card sec">
+            <h3><span>System</span></h3>
+            <div class="setting"><div>Start with Windows<small>Starts in the background with only the tray icon.</small></div><span class="switch"><input type="checkbox" id="autostart"><span></span></span></div>
+            <div class="setting"><div>Keep running in the tray<small>Closing the window keeps the lighting on. Quit from the tray icon.</small></div><span class="switch"><input type="checkbox" id="close_to_tray"><span></span></span></div>
+          </div>
+          <div class="card sec">
+            <h3><span>Idle</span></h3>
+            <div class="setting"><div>After<small id="idleText">Never</small></div><input type="range" id="idle_minutes" min="0" max="60" step="1" style="width:180px" aria-label="Idle minutes"></div>
+            <div class="setting"><div>Action<small>When mouse and keyboard are untouched.</small></div><div class="seg" id="idleAction"></div></div>
+          </div>
+          <div class="card sec">
+            <h3><span>Color calibration</span><button class="btn ghost" id="calReset">Reset</button></h3>
+            <div class="params" id="calib"></div>
+            <p class="empty" style="margin:12px 0 0">Tune red, green and blue until white on the keyboard looks truly white.</p>
+          </div>
+          <div class="card sec">
+            <h3><span>Device</span></h3>
+            <div class="setting"><div>SKYLOONG GK104 Pro<small id="kbInfo">—</small></div></div>
+            <div class="setting"><div>Studio shortcuts<small>V select · B brush · E eraser · I eyedropper · Ctrl+A all · Del clear · Ctrl+Z / Ctrl+Y</small></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right">
+      <div data-panel="lighting">
+        <div class="sec">
+          <h3><span>Effect options</span><button class="btn ghost" id="fxReset">Reset</button></h3>
+          <p class="title" id="fxTitle"></p><p class="sub" id="fxDesc"></p>
+          <div id="fxParams"></div>
+        </div>
+      </div>
+      <div data-panel="music">
+        <div class="sec">
+          <h3><span>Mode options</span><button class="btn ghost" id="mfxReset">Reset</button></h3>
+          <p class="title" id="mfxTitle"></p><p class="sub" id="mfxDesc"></p>
+          <div id="mfxParams"></div>
+        </div>
+      </div>
+      <div data-panel="studio">
+        <div class="sec"><h3><span>Layer properties</span></h3><div id="props"></div></div>
+        <div class="sec">
+          <h3><span>Selection</span></h3>
+          <div class="chips" id="quick"></div>
+          <div class="count" id="selCount"></div>
+          <div class="row">
+            <button class="btn" id="fillSel">Fill</button>
+            <button class="btn" id="gradSel" title="Paints the selection left to right with the chosen palette">Gradient</button>
+            <button class="btn ghost" id="clearSel">Clear paint</button>
+          </div>
+          <div class="row" style="margin-top:8px"><select id="gradPal" aria-label="Gradient palette"></select></div>
+        </div>
+      </div>
+      <div data-panel="chroma">
+        <div class="sec">
+          <h3><span>Playback</span></h3>
+          <p class="title" id="animTitle"></p><p class="sub" id="animSub"></p>
+          <div id="animParams"></div>
+        </div>
+        <div class="sec">
+          <h3><span>Chroma apps</span></h3>
+          <div class="setting"><div>Chroma apps take over<small>Apps and games using the Razer Chroma SDK light this keyboard while they run.</small></div><span class="switch"><input type="checkbox" id="chroma_override"><span></span></span></div>
+          <p class="sub" style="margin:12px 0 0" id="chromaNow"></p>
+        </div>
+      </div>
+      <div data-panel="devices">
+        <div class="sec">
+          <h3><span>Sync</span></h3>
+          <div class="setting"><div>Sync PC lighting<small>Fans, RAM, motherboard, GPU and coolers follow the keyboard.</small></div><span class="switch"><input type="checkbox" id="rgb_sync"><span></span></span></div>
+          <div class="prow" style="margin-top:16px"><div class="lab"><span>Color mapping</span></div><div class="seg" id="rgbMode"></div></div>
+          <p class="sub" style="margin:10px 0 0" id="rgbModeHelp"></p>
+        </div>
+        <div class="sec">
+          <h3><span>Status</span></h3>
+          <p class="sub" id="rgbStatus" style="margin:0"></p>
+        </div>
+        <div class="sec" id="zoneSec">
+          <h3><span>ARGB headers</span></h3>
+          <p class="sub">ARGB headers can't detect what is plugged in. Enter how many LEDs each one drives (fan, cooler or strip; check the box or the manual). 0 = nothing connected.</p>
+          <div class="params" id="rgbZones"></div>
+        </div>
+        <div class="sec">
+          <h3><span>Setup</span></h3>
+          <p class="sub" style="margin:0">FrøstRGB drives your other components through <b>OpenRGB</b>:<br>
+          1. Install and open OpenRGB.<br>2. In OpenRGB: <i>SDK Server</i> → <i>Start Server</i> (port 6742), and tick <i>Start server</i> under Settings so it stays on.<br>
+          3. Close MSI Center / Mystic Light and other RGB apps, or they will fight over the colors.</p>
+        </div>
+      </div>
+      <div data-panel="palettes"><div class="sec" id="palEditor"></div></div>
+    </aside>
+  </div>
+
+  <footer class="status">
+    <span class="st"><i class="dot" id="sbKb"></i><span id="sbKbText">Keyboard</span></span>
+    <span class="st" id="sbMode"></span>
+    <span class="grow"></span>
+    <span class="st"><i class="dot" id="audioDot"></i>Audio</span>
+    <span class="st"><i class="dot" id="chromaDot"></i><span id="chromaText">Chroma SDK</span></span>
+    <span class="st" id="fps">0 fps</span>
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const NAMES = {
+  static: "Static", breathing: "Breathing", spectrum: "Spectrum Cycling", wave: "Wave", gradient: "Gradient", plasma: "Plasma",
+  radial: "Radial", spiral: "Spiral", aurora: "Aurora", ocean: "Ocean", lava: "Lava Lamp", fire: "Fire", candle: "Candle",
+  police: "Siren", chase: "Marquee", scanner: "Scanner", comet: "Comets", matrix: "Matrix", starlight: "Starlight",
+  confetti: "Confetti", fireworks: "Fireworks", snake: "Snake", life: "Game of Life", reactive: "Reactive", ripple: "Ripple",
+  splash: "Splash", cross: "Crosshair", heatmap: "Heatmap",
+  equalizer: "Equalizer", bands_glow: "Band Glow", radial_eq: "Radial EQ", vu: "VU Meter", pulse: "Pulse",
+  beat_flash: "Beat Flash", beat_ripple: "Beat Ripple", bass_wave: "Bass Wave", sparkle: "Sparkle",
+  freq_color: "Frequency Color", paint: "Paint",
+};
+const CATS = {
+  "Ambient": ["static", "breathing", "spectrum", "wave", "gradient", "plasma", "radial", "spiral", "aurora", "ocean", "lava", "fire", "candle", "police", "chase", "scanner"],
+  "Particles": ["comet", "matrix", "starlight", "confetti", "fireworks", "snake", "life"],
+  "Typing": ["reactive", "ripple", "splash", "cross", "heatmap"],
+};
+const SRC = { lighting: "effect", music: "music", studio: "editor", chroma: "animation" };
+const TAB_OF = { effect: "lighting", music: "music", editor: "studio", animation: "chroma" };
+const DIR_ICONS = { right: "M5 12h14M13 6l6 6-6 6", left: "M19 12H5M11 6l-6 6 6 6", down: "M12 5v14M6 13l6 6 6-6", up: "M12 19V5M6 11l6-6 6 6",
+  out: "M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0M12 3v3M12 18v3M3 12h3M18 12h3", in: "M12 3v6M12 15v6M3 12h6M15 12h6", diag: "M6 18L18 6M10 6h8v8" };
+const ADDITIVE = new Set(["reactive", "ripple", "splash", "cross", "starlight", "sparkle", "beat_ripple", "matrix", "comet", "fireworks", "confetti"]);
+const SWATCHES = ["FFFFFF", "FF0000", "FF6A00", "FFD500", "00FF5A", "00E5FF", "0050FF", "B000FF", "FF00A8", "000000"];
+const $ = id => document.getElementById(id);
+const clone = o => JSON.parse(JSON.stringify(o));
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+let S = {}, OPT = {}, KEYS = [], ALLKEYS = [], FRAME = "", tab = "lighting", LIVE = {};
+let sel = new Set(), tool = "select", activeLayer = null, brush = "FF0000", recent = [], fxCat = "All", fxQuery = "", palSel = null;
+let undoStack = [], redoStack = [];
+const store = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+let favs = new Set();
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v === undefined) continue;
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "class") e.className = v;
+    else if (k in e && typeof v !== "string") e[k] = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) e.append(c);
+  return e;
+}
+function icon(path) { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.innerHTML = path; return s; }
+const ICONS = {
+  select: '<path d="M5 3l14 8-6 2-2 6z"/>',
+  brush: '<path d="M18 3l3 3-9 9-3-3z"/><path d="M9 12c-3 0-5 2-5 5 0 1.5-1 2-2 2 2 2 6 2 8-1 1-1 1-3 1-4"/>',
+  eraser: '<path d="M7 21h10"/><path d="M5 15l9-9 5 5-8 8H8z"/>',
+  picker: '<path d="M14 4l6 6"/><path d="M17 7l-9 9-4 1 1-4 9-9"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  up: '<path d="M6 15l6-6 6 6"/>', down: '<path d="M6 9l6 6 6-6"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  star: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/>',
+  play: '<path d="M7 4l13 8-13 8z"/>',
+};
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2400); }
+
+// ---------------------------------------------------------------- feel like an app, not a web page
+addEventListener("contextmenu", e => { if (!e.target.closest('input[type=text], .hex')) e.preventDefault(); });
+addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && "spufghjontdr+-=0".includes(k) && k.length === 1) e.preventDefault();
+  if (["f3", "f5", "f7"].includes(k)) e.preventDefault();
+}, true);
+addEventListener("wheel", e => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });  // no autoscroll
+addEventListener("dragstart", e => e.preventDefault());
+addEventListener("dragover", e => { e.preventDefault(); document.body.classList.add("dragging"); });
+addEventListener("dragleave", e => { if (!e.relatedTarget) document.body.classList.remove("dragging"); });
+addEventListener("drop", e => { e.preventDefault(); document.body.classList.remove("dragging"); if (e.dataTransfer?.files?.length) importFiles(e.dataTransfer.files); });
+
+// ---------------------------------------------------------------- palettes helpers
+function allPalettes() { return { ...OPT.palettes, ...(S.palettes || {}) }; }
+function palName(id) { return (OPT.palette_names || {})[id] || id; }
+function css(stops) { return stops.length > 1 ? `linear-gradient(90deg, ${stops.map(c => "#" + c).join(", ")})` : "#" + stops[0]; }
+function sampleHex(stops, t) {  // non-cyclic sample, for the gradient fill
+  const n = stops.length; if (n === 1) return stops[0];
+  const x = Math.min(1, Math.max(0, t)) * (n - 1), i = Math.min(Math.floor(x), n - 2), f = x - i;
+  const a = stops[i].match(/../g).map(h => parseInt(h, 16)), b = stops[i + 1].match(/../g).map(h => parseInt(h, 16));
+  return a.map((v, k) => Math.round(v + (b[k] - v) * f).toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+// ---------------------------------------------------------------- server sync
+async function post(changes) {
+  try {
+    const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
+    if (!r.ok) { toast("Could not save: " + ((await r.json()).error || r.status)); await reload(); }
+  } catch { toast("App disconnected"); }
+}
+function save(changes) { Object.assign(S, changes); post(changes); renderAll(); }
+const timers = {};
+function saveSoon(changes, key = Object.keys(changes).join()) {  // sliders and painting: coalesce requests
+  Object.assign(S, changes);
+  clearTimeout(timers[key]);
+  timers[key] = setTimeout(() => post(changes), 70);
+}
+async function reload() { const st = await (await fetch("/api/state")).json(); S = st.settings; OPT.autostart = st.autostart; OPT.animations = st.animations; renderAll(); }
+
+// ---------------------------------------------------------------- params panel (effects, music, layers)
+function metaOf(type) { return OPT.effects[type] || OPT.music[type] || null; }
+function paramsOf(kind, name) {
+  const m = metaOf(name), saved = (kind === "effect" ? S.fx : S.mfx)[name] || {};
+  return { ...OPT.param_defaults, ...(m?.defaults || {}), ...saved };
+}
+function slider(label, value, min, max, step, fmt, oninput, extra = {}) {
+  const v = el("span", { class: "v" }, fmt(value));
+  return el("div", { class: "prow" }, el("div", { class: "lab" }, el("span", {}, label), v),
+    el("input", { type: "range", min, max, step, value, "aria-label": label, ...extra, oninput: e => { v.textContent = fmt(+e.target.value); oninput(+e.target.value); } }));
+}
+function prow(label, ...kids) { return el("div", { class: "prow" }, el("div", { class: "lab" }, el("span", {}, label)), ...kids); }
+function paramsPanel(m, p, onChange, extra = []) {
+  // onChange(changes, live): live=true while dragging a slider (no re-render)
+  const rows = [];
+  if (m.palette !== null) {
+    const opts = [["", m.colors === 1 ? "Own color" : "Two colors", m.colors === 1 ? [p.color] : [p.color, p.color2]],
+                  ...Object.entries(allPalettes()).filter(([id]) => id !== "police" || m.colors === 2).map(([id, st]) => [id, palName(id), st])];
+    rows.push(prow("Palette", el("div", { class: "pals" },
+      ...opts.map(([id, label, st]) => el("button", { class: "pal", title: label, "aria-pressed": String(p.palette === id), onclick: () => onChange({ palette: id }) },
+        el("i", { style: `background:${css(st)}` }), el("span", {}, label))))));
+  }
+  const nColors = m.palette === null ? m.colors : p.palette === "" ? (m.colors === 1 ? 1 : 2) : 0;
+  if (nColors) rows.push(prow(nColors > 1 ? "Colors" : "Color", el("div", { class: "row" },
+    el("input", { type: "color", value: "#" + p.color, "aria-label": "Color 1", oninput: e => onChange({ color: e.target.value.slice(1).toUpperCase() }, true) }),
+    nColors > 1 ? el("input", { type: "color", value: "#" + p.color2, "aria-label": "Color 2", oninput: e => onChange({ color2: e.target.value.slice(1).toUpperCase() }, true) }) : null,
+    nColors > 1 ? el("button", { class: "btn ghost", title: "Swap colors", onclick: () => onChange({ color: p.color2, color2: p.color }) }, "⇄ Swap") : null)));
+  const x = v => v.toFixed(1) + "×";
+  rows.push(slider("Speed", p.speed, 0.1, 5, 0.1, x, v => onChange({ speed: v }, true)));
+  if (m.opts.includes("direction")) rows.push(prow("Direction", el("div", { class: "dirs" },
+    ...Object.entries(OPT.directions).map(([d, label]) => el("button", { title: label, "aria-label": label, "aria-pressed": String(p.direction === d), onclick: () => onChange({ direction: d }) }, icon(`<path d="${DIR_ICONS[d]}"/>`))))));
+  if (m.opts.includes("size")) rows.push(slider("Size", p.size, 0.2, 5, 0.1, x, v => onChange({ size: v }, true)));
+  if (m.opts.includes("density")) rows.push(slider("Density", p.density, 0.1, 5, 0.1, x, v => onChange({ density: v }, true)));
+  if (m.opts.includes("glow")) rows.push(slider("Background glow", p.glow, 0, 0.6, 0.01, v => Math.round(v * 100) + "%", v => onChange({ glow: v }, true)));
+  return el("div", { class: "params" }, ...rows, ...extra);
+}
+function fxChange(kind, name) {
+  const key = kind === "effect" ? "fx" : "mfx";
+  return (changes, live) => {
+    const p = { ...paramsOf(kind, name), ...changes };
+    S[key] = { ...S[key], [name]: p };
+    if (live) saveSoon({ [key]: { [name]: p } }, key + name);
+    else { post({ [key]: { [name]: p } }); renderAll(); }
+  };
+}
+function stripOf(kind, id) {
+  const m = metaOf(id), p = paramsOf(kind, id);
+  return m.palette === null ? [p.color, ...(m.colors > 1 ? [p.color2] : [])] : p.palette === "" ? [p.color, p.color2] : (allPalettes()[p.palette] || [p.color]);
+}
+
+// ---------------------------------------------------------------- tabs & header
+function animExists(name = S.animation) { return !!name && (OPT.animations || []).some(a => a.name === name); }
+function setTab(t) {
+  tab = t; store.set("tab", t);
+  const src = SRC[t];
+  if (src && S.source !== src && (src !== "animation" || animExists())) save({ source: src });
+  renderAll(); requestAnimationFrame(layout);
+}
+document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$("power").onclick = () => S.source === "off" ? save({ source: store.get("lastSource", "effect") }) : (store.set("lastSource", S.source), save({ source: "off" }));
+$("brightness").oninput = e => { $("brightV").textContent = e.target.value + "%"; saveSoon({ brightness: +e.target.value }); };
+$("chroma_override").onchange = e => save({ chroma_override: e.target.checked });
+$("close_to_tray").onchange = e => save({ close_to_tray: e.target.checked });
+$("autostart").onchange = async e => { await post({ autostart: e.target.checked }); OPT.autostart = e.target.checked; toast(e.target.checked ? "FrøstRGB will start with Windows" : "FrøstRGB will no longer start with Windows"); };
+$("fxSearch").oninput = e => { fxQuery = e.target.value.toLowerCase(); renderEffect(); };
+$("fxReset").onclick = () => { S.fx = { ...S.fx }; delete S.fx[S.effect]; const p = paramsOf("effect", S.effect); post({ fx: { [S.effect]: p } }); S.fx[S.effect] = p; renderAll(); };
+$("mfxReset").onclick = () => { S.mfx = { ...S.mfx }; delete S.mfx[S.music]; const p = paramsOf("music", S.music); post({ mfx: { [S.music]: p } }); S.mfx[S.music] = p; renderAll(); };
+
+function modeLabel() {
+  if (LIVE.chroma && S.chroma_override) return `Chroma app: ${LIVE.chroma}`;
+  return { off: "Lighting off", effect: `Lighting › ${NAMES[S.effect]}`, music: `Music Sync › ${NAMES[S.music]}`,
+           editor: `Studio › ${plural(S.editor.layers.length, "layer", "layers")}`, animation: `Chroma › ${S.animation || "no animation"}` }[S.source];
+}
+function renderHeader() {
+  document.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
+  document.querySelectorAll("[data-live]").forEach(d => d.style.display = S.source === d.dataset.live ? "" : "none");
+  document.querySelectorAll("[data-panel]").forEach(p => p.classList.toggle("show", p.dataset.panel === tab));
+  $("main").classList.toggle("wide", tab === "settings");
+  $("power").classList.toggle("on", S.source !== "off");
+  $("brightness").value = S.brightness; $("brightV").textContent = Math.round(S.brightness) + "%";
+  $("stage").classList.toggle("editing", tab === "studio");
+  $("stageHint").textContent = tab === "studio" ? hintFor() : S.source === "off" ? "Lighting is off" : "";
+  $("sbMode").textContent = modeLabel();
+}
+function hintFor() {
+  const L = layer();
+  if (tool === "select") return "Click or drag to select keys · Shift adds · Ctrl toggles";
+  if (tool === "picker") return "Click a key to copy its color";
+  if (!L || L.type !== "paint") return "Pick a Paint layer to paint on";
+  return tool === "brush" ? "Click or drag to paint" : "Click or drag to erase";
+}
+
+// ---------------------------------------------------------------- lighting & music
+function listItem(kind, id, m, active, onclick) {
+  return el("div", { class: "item" + (active ? " on" : ""), role: "button", tabindex: 0, onclick, onkeydown: e => e.key === "Enter" && onclick() },
+    el("i", { class: "sw4", style: `background:${css(stripOf(kind, id))}` }),
+    el("span", { class: "tx" }, el("b", {}, NAMES[id] || id), el("small", {}, m.desc)),
+    m.reactive ? el("span", { class: "tag" }, "typing") : null,
+    kind === "effect" ? el("button", { class: "fav" + (favs.has(id) ? " on" : ""), title: "Favorite", "aria-label": "Favorite",
+      onclick: e => { e.stopPropagation(); favs.has(id) ? favs.delete(id) : favs.add(id); store.set("favs", [...favs]); renderEffect(); } }, icon(ICONS.star)) : null);
+}
+function renderEffect() {
+  $("fxCats").replaceChildren(...["All", "Favorites", ...Object.keys(CATS)].map(c => el("button", { class: "chip", "aria-pressed": String(fxCat === c), onclick: () => { fxCat = c; renderEffect(); } }, c)));
+  const match = id => !fxQuery || (NAMES[id] + " " + OPT.effects[id].desc).toLowerCase().includes(fxQuery);
+  const groups = fxCat === "All" ? Object.entries(CATS) : fxCat === "Favorites" ? [["Favorites", Object.keys(OPT.effects).filter(id => favs.has(id))]] : [[fxCat, CATS[fxCat]]];
+  const out = [];
+  for (const [g, ids] of groups) {
+    const shown = ids.filter(id => OPT.effects[id] && match(id));
+    if (!shown.length) continue;
+    out.push(el("div", { class: "group" }, g), el("div", { class: "list" }, ...shown.map(id => listItem("effect", id, OPT.effects[id], S.effect === id && S.source === "effect", () => save({ effect: id, source: "effect" })))));
+  }
+  $("effectList").replaceChildren(...(out.length ? out : [el("p", { class: "empty" }, fxCat === "Favorites" ? "Star effects to pin them here." : "No effects found.")]));
+  $("fxTitle").textContent = NAMES[S.effect]; $("fxDesc").textContent = OPT.effects[S.effect].desc;
+  $("fxParams").replaceChildren(paramsPanel(OPT.effects[S.effect], paramsOf("effect", S.effect), fxChange("effect", S.effect)));
+}
+function renderMusic() {
+  $("musicList").replaceChildren(...Object.entries(OPT.music).map(([id, m]) => listItem("music", id, m, S.music === id && S.source === "music", () => save({ music: id, source: "music" }))));
+  $("mfxTitle").textContent = NAMES[S.music]; $("mfxDesc").textContent = OPT.music[S.music].desc;
+  const sens = slider("Sensitivity", S.sensitivity, 0.2, 8, 0.1, v => v.toFixed(1) + "×", v => saveSoon({ sensitivity: v }));
+  $("mfxParams").replaceChildren(paramsPanel(OPT.music[S.music], paramsOf("music", S.music), fxChange("music", S.music), [sens]));
+}
+
+// ---------------------------------------------------------------- chroma animations
+async function importFiles(files) {
+  let last = null, n = 0;
+  for (const f of files) {
+    if (!/\.(chroma|chromaeffects)$/i.test(f.name)) { toast(`${f.name}: not a .ChromaEffects or .chroma file`); continue; }
+    try {
+      const r = await fetch("/api/animations/import?name=" + encodeURIComponent(f.name), { method: "POST", body: f });
+      const j = await r.json();
+      if (!r.ok) { toast(`${f.name}: ${j.error}`); continue; }
+      OPT.animations = j.animations; last = j.name; n++;
+    } catch { toast("App disconnected"); }
+  }
+  if (last) { tab = "chroma"; save({ animation: last, source: "animation" }); toast(n === 1 ? `Imported "${last}"` : `Imported ${n} animations`); }
+}
+async function deleteAnim(name) {
+  try {
+    const r = await fetch("/api/animations/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const j = await r.json();
+    if (!r.ok) return toast(j.error);
+    OPT.animations = j.animations;
+    if (S.animation === name) save({ animation: "", ...(S.source === "animation" ? { source: "effect" } : {}) }); else renderAll();
+    toast(`Deleted "${name}"`);
+  } catch { toast("App disconnected"); }
+}
+$("animImport").onclick = () => $("animFile").click();
+$("animFile").onchange = e => { importFiles([...e.target.files]); e.target.value = ""; };
+function renderChroma() {
+  const list = OPT.animations || [];
+  $("animList").replaceChildren(...(list.length ? list.map(a => {
+    const play = () => save({ animation: a.name, source: "animation" });
+    return el("div", { class: "item" + (S.animation === a.name && S.source === "animation" ? " on" : ""), role: "button", tabindex: 0, onclick: play, onkeydown: e => e.key === "Enter" && play() },
+      el("i", { class: "sw4", style: "background:conic-gradient(from 200deg,#5ce1ff,#8b9dff,#ff6ad5,#ffd166,#5ce1ff)" }),
+      el("span", { class: "tx" }, el("b", {}, a.name), el("small", {}, a.summary)),
+      el("button", { class: "icon", title: "Delete", "aria-label": "Delete " + a.name, onclick: e => { e.stopPropagation(); deleteAnim(a.name); } }, icon(ICONS.trash)));
+  }) : [el("p", { class: "empty" }, "No animations yet.")]));
+  const a = list.find(x => x.name === S.animation);
+  $("animTitle").textContent = a ? a.name : "No animation selected";
+  $("animSub").textContent = a ? a.summary : "Import a .ChromaEffects or .chroma file and click it to play.";
+  $("animParams").replaceChildren(slider("Playback speed", S.anim_speed, 0.1, 5, 0.1, v => v.toFixed(1) + "×", v => saveSoon({ anim_speed: v })));
+  $("chroma_override").checked = S.chroma_override;
+  $("chromaNow").textContent = LIVE.chroma ? `Active now: ${LIVE.chroma}` : "No Chroma app connected (SDK listening on port 54235).";
+}
+
+// ---------------------------------------------------------------- PC sync (OpenRGB)
+const RGB_MODES = { spread: ["Spread", "Each device shows the keyboard left to right, so waves travel across the fans."],
+                    average: ["Average", "Every LED shows the average color of the whole keyboard."],
+                    lit: ["Lit keys", "Average of the lit keys only: reactive effects still color the PC."] };
+$("rgb_sync").onchange = e => save({ rgb_sync: e.target.checked });
+function renderDevices() {
+  const st = LIVE.rgb || {}, off = new Set(S.rgb_off || []);
+  $("rgb_sync").checked = S.rgb_sync;
+  $("rgbMode").replaceChildren(...Object.entries(RGB_MODES).map(([v, [n]]) => el("button", { "aria-pressed": String(S.rgb_mode === v), onclick: () => save({ rgb_mode: v }) }, n)));
+  $("rgbModeHelp").textContent = RGB_MODES[S.rgb_mode][1];
+  $("rgbStatus").textContent = !S.rgb_sync ? "Sync is off." : st.connected ? `Connected to OpenRGB · ${plural(st.devices.length, "device", "devices")}`
+    : `Waiting for OpenRGB on port ${S.rgb_port}… ${st.error ? "(" + st.error + ")" : ""}`;
+  const devs = st.devices || [];
+  const zones = devs.flatMap(d => d.zones.filter(z => z[2] !== z[3]).map(z => ({ key: `${d.name}|${z[0]}`, label: `${z[0]} · ${d.name}`, count: z[1], max: z[3] })));
+  $("zoneSec").style.display = zones.length ? "" : "none";
+  $("rgbZones").replaceChildren(...zones.map(z => prow(z.label, el("input", { type: "text", inputmode: "numeric", value: String((S.rgb_zones || {})[z.key] ?? z.count), "aria-label": `LEDs on ${z.label}`, spellcheck: "false",
+    onchange: e => { const n = Math.max(0, Math.min(z.max, parseInt(e.target.value, 10) || 0)); e.target.value = n; save({ rgb_zones: { ...(S.rgb_zones || {}), [z.key]: n } }); } }))));
+  $("rgbList").replaceChildren(...(devs.length ? devs.map(d => {
+    if (/GK104/i.test(d.name)) return el("div", { class: "item" }, el("i", { class: "sw4", style: "background:var(--p3)" }),
+      el("span", { class: "tx" }, el("b", {}, d.name), el("small", {}, "Driven directly by FrøstRGB")), el("span", { class: "tag" }, "this keyboard"));
+    const on = !off.has(d.name);
+    const toggle = () => save({ rgb_off: on ? [...off, d.name] : [...off].filter(n => n !== d.name) });
+    return el("div", { class: "item" + (on ? " on" : ""), role: "button", tabindex: 0, onclick: toggle, onkeydown: e => e.key === "Enter" && toggle() },
+      el("i", { class: "sw4", style: `background:${on ? "conic-gradient(from 200deg,#5ce1ff,#8b9dff,#ff6ad5,#ffd166,#5ce1ff)" : "var(--p3)"}` }),
+      el("span", { class: "tx" }, el("b", {}, d.name), el("small", {}, `${d.type} · ${plural(d.leds, "LED", "LEDs")}${d.zones.length > 1 ? " · " + d.zones.map(z => z[0]).join(", ") : ""}`)),
+      el("span", { class: "tag" }, on ? "synced" : "off"));
+  }) : [el("p", { class: "empty" }, S.rgb_sync ? "No devices yet. Start OpenRGB and its SDK server." : "Turn on sync to list your PC's RGB devices.")]));
+}
+
+// ---------------------------------------------------------------- palettes
+function renderPalettes() {
+  const custom = S.palettes || {};
+  const item = (id, st, isCustom) => el("div", { class: "item" + (palSel === id ? " on" : ""), role: "button", tabindex: 0, onclick: () => { palSel = id; renderPalettes(); } },
+    el("i", { class: "sw4", style: `background:${css(st)};width:60px;height:22px` }), el("span", { class: "tx" }, el("b", {}, isCustom ? id : palName(id))), isCustom ? el("span", { class: "tag" }, "custom") : null);
+  $("palList").replaceChildren(...Object.entries(custom).map(([id, st]) => item(id, st, true)), ...Object.entries(OPT.palettes).map(([id, st]) => item(id, st, false)));
+  const E = $("palEditor");
+  if (!palSel || !(palSel in allPalettes())) palSel = Object.keys(custom)[0] || "rainbow";
+  const builtin = palSel in OPT.palettes && !(palSel in custom);
+  const stops = [...allPalettes()[palSel]];
+  const name = el("input", { type: "text", value: builtin ? "" : palSel, maxlength: 30, placeholder: "Palette name", disabled: builtin, "aria-label": "Palette name", spellcheck: "false" });
+  const strip = el("div", { class: "preview-strip", style: `background:${css(stops)}` });
+  const redraw = () => { strip.style.background = css(stops); };
+  const stopEls = () => el("div", { class: "stops" }, ...stops.map((c, k) => el("div", { class: "stop" },
+    el("input", { type: "color", value: "#" + c, disabled: builtin, "aria-label": `Color ${k + 1}`, oninput: e => { stops[k] = e.target.value.slice(1).toUpperCase(); redraw(); } }),
+    builtin || stops.length <= 2 ? null : el("button", { class: "icon", title: "Remove color", "aria-label": "Remove color", onclick: () => { stops.splice(k, 1); rebuild(); } }, icon(ICONS.trash)))),
+    builtin || stops.length >= 10 ? null : el("button", { class: "btn", onclick: () => { stops.push(stops[stops.length - 1]); rebuild(); } }, "+ Color"));
+  let stopsBox = stopEls();
+  const rebuild = () => { const n = stopEls(); stopsBox.replaceWith(n); stopsBox = n; redraw(); };
+  const saveP = () => {
+    const n = name.value.trim();
+    if (!n) return toast("Give the palette a name");
+    if (n in OPT.palettes) return toast("That name belongs to a built-in palette");
+    const p = { ...custom }; if (palSel !== n) delete p[palSel]; p[n] = stops;
+    const renamed = palSel !== n ? palSel : null;
+    palSel = n; save({ palettes: p, ...(renamed ? swapPalette(renamed, n) : {}) }); toast(`Palette "${n}" saved`);
+  };
+  const del = () => { const p = { ...custom }; delete p[palSel]; const fix = swapPalette(palSel, null); const n = palSel; palSel = null; save({ palettes: p, ...fix }); toast(`Palette "${n}" deleted`); };
+  const dup = () => { let n = palName(palSel) + " copy", k = 2; while (n in allPalettes()) n = `${palName(palSel)} copy ${k++}`; save({ palettes: { ...custom, [n]: stops } }); palSel = n; renderPalettes(); };
+  E.replaceChildren(el("h3", {}, el("span", {}, builtin ? "Built-in palette" : "Edit palette"), builtin ? el("button", { class: "btn", onclick: dup }, "Duplicate to edit") : null),
+    el("p", { class: "title" }, builtin ? palName(palSel) : palSel), el("p", { class: "sub" }, plural(stops.length, "color", "colors")),
+    strip, builtin ? null : el("div", { style: "margin-bottom:14px" }, prow("Name", name)), stopsBox,
+    builtin ? el("p", { class: "empty", style: "margin-top:14px" }, "Built-in palettes are read-only. Duplicate one to make your own version.") :
+      el("div", { class: "row", style: "margin-top:16px" }, el("button", { class: "btn primary", onclick: saveP }, "Save palette"), el("button", { class: "btn danger", onclick: del }, "Delete")));
+}
+function swapPalette(from, to) {  // keep effects working when a palette is renamed (to) or deleted (to = null)
+  const out = {};
+  for (const key of ["fx", "mfx"]) {
+    const changed = {};
+    for (const [name, p] of Object.entries(S[key] || {})) if (p.palette === from) changed[name] = { ...p, palette: to ?? (metaOf(name)?.defaults?.palette ?? "") };
+    if (Object.keys(changed).length) out[key] = changed, S[key] = { ...S[key], ...changed };
+  }
+  let ed = false;
+  for (const l of S.editor.layers) if (l.palette === from) { l.palette = to ?? (metaOf(l.type)?.defaults?.palette ?? ""); ed = true; }
+  if (ed) out.editor = S.editor;
+  return out;
+}
+$("palNew").onclick = () => { let n = "My palette", k = 2; while (n in allPalettes()) n = `My palette ${k++}`; save({ palettes: { ...(S.palettes || {}), [n]: ["FF0080", "7B00FF", "00F0FF"] } }); palSel = n; renderPalettes(); };
+
+// ---------------------------------------------------------------- settings
+const idleText = m => m ? `${plural(m, "minute", "minutes")} without input` : "Never";
+function renderSettings() {
+  $("close_to_tray").checked = S.close_to_tray; $("autostart").checked = !!OPT.autostart;
+  $("idle_minutes").value = S.idle_minutes; $("idleText").textContent = idleText(S.idle_minutes);
+  $("idleAction").replaceChildren(...[["off", "Turn off"], ["dim", "Dim"]].map(([v, n]) => el("button", { "aria-pressed": String(S.idle_action === v), onclick: () => save({ idle_action: v }) }, n)));
+  const sl = (k, label, max) => slider(label, S[k], 0, max, 1, v => Math.round(v) + "%", v => saveSoon({ [k]: v }));
+  $("calib").replaceChildren(sl("gain_r", "Red", 100), sl("gain_g", "Green", 100), sl("gain_b", "Blue", 100), sl("saturation", "Saturation", 200));
+}
+$("idle_minutes").oninput = e => { saveSoon({ idle_minutes: +e.target.value }); $("idleText").textContent = idleText(+e.target.value); };
+$("calReset").onclick = () => save({ gain_r: 100, gain_g: 100, gain_b: 100, saturation: 100 });
+
+// ---------------------------------------------------------------- studio (per-key editor)
+const SPACE = () => ALLKEYS.filter(k => /Space$/.test(k.name)).map(k => k.index);
+function expand(i) { const sp = SPACE(); return sp.includes(i) ? sp : [i]; }   // space bar = 3 LEDs
+function layers() { return S.editor.layers; }
+function layer() { return layers().find(l => l.id === activeLayer) || null; }
+function snapshot() { undoStack.push(JSON.stringify(S.editor)); if (undoStack.length > 100) undoStack.shift(); redoStack = []; }
+function commitEditor() { saveSoon({ editor: S.editor }, "editor"); renderEditor(); renderHeader(); }
+function undo() { if (!undoStack.length) return; redoStack.push(JSON.stringify(S.editor)); S.editor = JSON.parse(undoStack.pop()); commitEditor(); }
+function redo() { if (!redoStack.length) return; undoStack.push(JSON.stringify(S.editor)); S.editor = JSON.parse(redoStack.pop()); commitEditor(); }
+function setBrush(hex) {
+  brush = hex.toUpperCase(); $("brushColor").value = "#" + brush; $("brushHex").value = "#" + brush;
+  recent = [brush, ...recent.filter(c => c !== brush)].slice(0, 8); store.set("recent", recent); renderSwatches();
+}
+function paintKeys(idx, color) {  // color: hex, null = erase, or function(index) -> hex
+  const L = layer(); if (!L || L.type !== "paint") { toast("Select a Paint layer first"); return false; }
+  for (const i of idx) for (const j of expand(i)) { const c = typeof color === "function" ? color(i) : color; c ? (L.paint[j] = c) : delete L.paint[j]; }
+  return true;
+}
+function renderTools() {
+  const T = [["select", "Select", "V"], ["brush", "Brush", "B"], ["eraser", "Eraser", "E"], ["picker", "Eyedropper", "I"]];
+  $("tools").replaceChildren(...T.map(([id, name, k]) => el("button", { class: "tool", title: `${name} (${k})`, "aria-label": name, "aria-pressed": String(tool === id), onclick: () => { tool = id; renderTools(); renderHeader(); } }, icon(ICONS[id]), el("kbd", {}, k))));
+}
+function renderSwatches() {
+  const sw = c => el("button", { class: "sw", style: `background:#${c}`, title: "#" + c, "aria-label": "Color #" + c, onclick: () => setBrush(c) });
+  $("swatches").replaceChildren(...SWATCHES.map(sw));
+  $("recent").replaceChildren(...recent.map(sw));
+}
+const QUICK = {
+  "All": k => true, "WASD": k => ["W", "A", "S", "D"].includes(k.name), "Arrows": k => / Arrow$/.test(k.name),
+  "F row": k => /^(Escape|F\d+)$/.test(k.name), "Numbers": k => k.row === 1 && k.col <= 12, "Letters": k => /^[A-Z]$/.test(k.name),
+  "Numpad": k => /^Keypad|^Num Lock$/.test(k.name), "Modifiers": k => /Shift|Control|Alt|GUI|^Fn$|^App$|^Tab$|^Caps Lock$/.test(k.name),
+  "Navigation": k => /^(Insert|Home|Page Up|Delete|End|Page Down|Print Screen|Scroll Lock|Pause)$/.test(k.name),
+};
+function renderSelection() {
+  $("quick").replaceChildren(
+    ...Object.entries(QUICK).map(([n, f]) => el("button", { class: "chip", onclick: e => { const ids = KEYS.filter(f).map(k => k.index); sel = e.shiftKey ? new Set([...sel, ...ids]) : new Set(ids); renderSelection(); } }, n)),
+    el("button", { class: "chip", onclick: () => { sel = new Set(KEYS.filter(k => !sel.has(k.index)).map(k => k.index)); renderSelection(); } }, "Invert"),
+    el("button", { class: "chip", onclick: () => { sel.clear(); renderSelection(); } }, "None"));
+  $("selCount").textContent = sel.size ? plural(sel.size, "key selected", "keys selected") : "No keys selected";
+  $("fillSel").disabled = $("clearSel").disabled = $("gradSel").disabled = !sel.size;
+  drawKeyboard();
+}
+$("fillSel").onclick = () => { snapshot(); if (paintKeys([...sel], brush)) commitEditor(); };
+$("clearSel").onclick = () => { snapshot(); if (paintKeys([...sel], null)) commitEditor(); };
+$("gradSel").onclick = () => {
+  const st = allPalettes()[$("gradPal").value] || [brush, brush], xs = [...sel].map(i => KEYS.find(k => k.index === i)?.x ?? 0);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  snapshot();
+  if (paintKeys([...sel], i => sampleHex(st, x1 > x0 ? ((KEYS.find(k => k.index === i)?.x ?? x0) - x0) / (x1 - x0) : 0))) commitEditor();
+};
+$("brushColor").oninput = e => setBrush(e.target.value.slice(1));
+$("brushHex").onchange = e => { const v = e.target.value.replace("#", ""); /^[0-9a-f]{6}$/i.test(v) ? setBrush(v) : (e.target.value = "#" + brush); };
+
+function renderProfiles() {
+  const names = Object.keys(S.profiles || {});
+  $("profileSel").replaceChildren(...(names.length ? names.map(n => el("option", { value: n }, n)) : [el("option", { value: "" }, "No saved profiles")]));
+  $("profileLoad").disabled = $("profileDel").disabled = !names.length;
+  if (!$("profileDel").firstChild) $("profileDel").append(icon(ICONS.trash));
+  const cur = $("gradPal").value || "rainbow";
+  $("gradPal").replaceChildren(...Object.keys(allPalettes()).map(id => el("option", { value: id, selected: id === cur }, "Palette: " + palName(id))));
+}
+$("profileSave").onclick = () => {
+  const n = $("profileName").value.trim() || $("profileSel").value;
+  if (!n) return toast("Give the profile a name");
+  save({ profiles: { ...S.profiles, [n]: clone(S.editor) } }); $("profileName").value = ""; toast(`Profile "${n}" saved`);
+};
+$("profileLoad").onclick = () => { const n = $("profileSel").value; if (!n) return; snapshot(); S.editor = clone(S.profiles[n]); activeLayer = layers()[0]?.id; commitEditor(); toast(`Profile "${n}" loaded`); };
+$("profileDel").onclick = () => { const n = $("profileSel").value; if (!n) return; const p = { ...S.profiles }; delete p[n]; save({ profiles: p }); toast(`Profile "${n}" deleted`); };
+
+function typeOptions(select, value) {
+  const grp = (label, ids) => el("optgroup", { label }, ...ids.map(id => el("option", { value: id, selected: id === value }, NAMES[id] || id)));
+  select.replaceChildren(grp("Paint", ["paint"]), grp("Effects", Object.keys(OPT.effects)), grp("Music", Object.keys(OPT.music)));
+  select.value = value;
+}
+function layerDefaults(type) { return { ...OPT.param_defaults, ...(metaOf(type)?.defaults || {}) }; }
+function addLayer() {
+  const type = $("newType").value;
+  snapshot();
+  const id = Math.max(0, ...layers().map(l => l.id)) + 1;
+  layers().push({ id, name: NAMES[type] || type, type, ...layerDefaults(type), opacity: 100,
+                  blend: ADDITIVE.has(type) ? "add" : "normal", enabled: true, keys: sel.size ? [...sel].flatMap(expand) : null, paint: {} });
+  activeLayer = id; commitEditor();
+}
+$("addLayer").onclick = () => layers().length >= 16 ? toast("16 layers maximum") : addLayer();
+$("dupLayer").onclick = () => { const L = layer(); if (!L) return; if (layers().length >= 16) return toast("16 layers maximum"); snapshot(); const id = Math.max(...layers().map(l => l.id)) + 1; layers().splice(layers().indexOf(L) + 1, 0, { ...clone(L), id, name: L.name + " copy" }); activeLayer = id; commitEditor(); };
+$("undo").onclick = undo; $("redo").onclick = redo;
+
+function layerThumb(l) {
+  if (l.type === "paint") { const c = [...new Set(Object.values(l.paint))].slice(0, 4); return c.length ? css(c) : "repeating-conic-gradient(#1a2230 0 25%, #10161f 0 50%) 0 0/8px 8px"; }
+  const m = metaOf(l.type), st = m.palette === null || l.palette === "" ? [l.color, l.color2] : (allPalettes()[l.palette] || [l.color]);
+  return css(st);
+}
+function renderLayers() {
+  const Ls = layers();
+  if (!Ls.find(l => l.id === activeLayer)) activeLayer = Ls[Ls.length - 1]?.id ?? null;
+  const move = (i, d) => { snapshot(); const [l] = Ls.splice(i, 1); Ls.splice(i + d, 0, l); commitEditor(); };
+  // top of the list = top of the stack (drawn last)
+  $("layerList").replaceChildren(...(Ls.length ? Ls.map((l, i) => el("div", { class: "layer" + (l.id === activeLayer ? " active" : ""), onclick: () => { activeLayer = l.id; renderEditor(); renderHeader(); } },
+    el("button", { class: "icon" + (l.enabled ? "" : " off"), title: l.enabled ? "Hide" : "Show", "aria-label": "Visibility", onclick: e => { e.stopPropagation(); snapshot(); l.enabled = !l.enabled; commitEditor(); } }, icon(ICONS.eye)),
+    el("i", { class: "thumb", style: `background:${layerThumb(l)}` }),
+    el("div", { class: "nm" }, el("b", {}, l.name || NAMES[l.type]), el("small", {}, `${NAMES[l.type]} · ${l.keys ? plural(l.keys.length, "LED", "LEDs") : "all keys"} · ${Math.round(l.opacity)}%`)),
+    el("button", { class: "icon", title: "Move up", "aria-label": "Move up", disabled: i === Ls.length - 1, onclick: e => { e.stopPropagation(); move(i, 1); } }, icon(ICONS.up)),
+    el("button", { class: "icon", title: "Move down", "aria-label": "Move down", disabled: i === 0, onclick: e => { e.stopPropagation(); move(i, -1); } }, icon(ICONS.down)),
+    el("button", { class: "icon", title: "Delete", "aria-label": "Delete layer", onclick: e => { e.stopPropagation(); snapshot(); Ls.splice(i, 1); commitEditor(); } }, icon(ICONS.trash))
+  )).reverse() : [el("p", { class: "empty" }, "No layers. Add one below.")]));
+  typeOptions($("newType"), $("newType").value || "paint");
+}
+function renderProps() {
+  const L = layer(), P = $("props");
+  if (!L) return P.replaceChildren(el("p", { class: "empty" }, "Select a layer."));
+  const edit = (k, v, now = false) => { if (now) snapshot(); L[k] = v; now ? commitEditor() : saveSoon({ editor: S.editor }, "editor"); };
+  const type = el("select", { "aria-label": "Layer type", onchange: e => { snapshot(); Object.assign(L, layerDefaults(e.target.value), { type: e.target.value, blend: ADDITIVE.has(e.target.value) ? "add" : "normal" }); commitEditor(); } });
+  typeOptions(type, L.type);
+  const common = [
+    slider("Opacity", L.opacity, 0, 100, 1, v => Math.round(v) + "%", v => edit("opacity", v), { onpointerdown: () => snapshot() }),
+    prow("Blend", el("div", {}, el("div", { class: "seg" }, ...[["normal", "Normal"], ["add", "Add"]].map(([v, n]) =>
+      el("button", { "aria-pressed": String(L.blend === v), onclick: () => edit("blend", v, true) }, n))))),
+    prow(`Keys · ${L.keys ? plural(L.keys.length, "LED", "LEDs") : "all"}`, el("div", { class: "row" },
+      el("button", { class: "btn", disabled: !sel.size, onclick: () => edit("keys", [...sel].flatMap(expand), true) }, "Use selection"),
+      el("button", { class: "btn ghost", disabled: !L.keys, onclick: () => edit("keys", null, true) }, "All keys"),
+      el("button", { class: "btn ghost", disabled: !L.keys && !Object.keys(L.paint).length, onclick: () => { sel = new Set((L.keys || Object.keys(L.paint).map(Number))); renderSelection(); } }, "Select")))];
+  const head = [prow("Name", el("input", { type: "text", value: L.name, maxlength: 40, spellcheck: "false", onchange: e => edit("name", e.target.value, true) })), prow("Type", type)];
+  const m = metaOf(L.type);
+  P.replaceChildren(el("div", { class: "params" }, ...head,
+    ...(m ? [paramsPanel(m, L, (changes, live) => { if (!live) snapshot(); Object.assign(L, changes); live ? saveSoon({ editor: S.editor }, "editor") : commitEditor(); })]
+          : [prow("Paint", el("p", { class: "empty", style: "margin:0" }, plural(Object.keys(L.paint).length, "LED painted", "LEDs painted")))]),
+    ...common));
+}
+function renderEditor() { renderTools(); renderProfiles(); renderLayers(); renderProps(); renderSelection(); }
+
+function renderAll() {
+  renderHeader();
+  if (tab === "lighting") renderEffect();
+  if (tab === "music") renderMusic();
+  if (tab === "studio") renderEditor();
+  if (tab === "chroma") renderChroma();
+  if (tab === "palettes") renderPalettes();
+  if (tab === "devices") renderDevices();
+  if (tab === "settings") renderSettings();
+}
+
+// ---------------------------------------------------------------- keyboard canvas
+let box = null, rects = [], hover = null, drag = null;
+function layout() {
+  const st = $("stage"), c = $("kb"), dpr = devicePixelRatio || 1;
+  const W = st.clientWidth - 56, H = st.clientHeight - 56;
+  if (W <= 0 || H <= 0 || !KEYS.length) return;
+  const x0 = Math.min(...KEYS.map(k => k.x - k.w / 2)), x1 = Math.max(...KEYS.map(k => k.x + k.w / 2));
+  const y0 = Math.min(...KEYS.map(k => k.y - k.h / 2)), y1 = Math.max(...KEYS.map(k => k.y + k.h / 2));
+  const pad = 16, s = Math.min((W - 2 * pad) / (x1 - x0), (H - 2 * pad) / (y1 - y0), 1.7);
+  const w = (x1 - x0) * s + 2 * pad, h = (y1 - y0) * s + 2 * pad;
+  c.width = w * dpr; c.height = h * dpr; c.style.width = w + "px"; c.style.height = h + "px";
+  box = { dpr, w, h };
+  rects = KEYS.map(k => ({ k, x: pad + (k.x - k.w / 2 - x0) * s + 2, y: pad + (k.y - k.h / 2 - y0) * s + 2, w: k.w * s - 4, h: k.h * s - 4 }));
+  drawKeyboard();
+}
+function rgbAt(i) { const o = i * 6; return [0, 2, 4].map(d => parseInt(FRAME.substr(o + d, 2), 16) || 0); }
+function drawKeyboard() {
+  if (!box) return;
+  const g = $("kb").getContext("2d"), editing = tab === "studio";
+  g.setTransform(box.dpr, 0, 0, box.dpr, 0, 0); g.clearRect(0, 0, box.w, box.h);
+  const caseGrad = g.createLinearGradient(0, 0, 0, box.h);
+  caseGrad.addColorStop(0, "#151c27"); caseGrad.addColorStop(1, "#0a0e14");
+  g.beginPath(); g.roundRect(1, 1, box.w - 2, box.h - 2, 14); g.fillStyle = caseGrad; g.fill();
+  g.lineWidth = 1; g.strokeStyle = "#243042"; g.stroke();
+  for (const R of rects) {
+    const [r, gg, b] = rgbAt(R.k.index), lit = r + gg + b > 24;
+    g.beginPath(); g.roundRect(R.x, R.y, R.w, R.h, 5);
+    g.fillStyle = "#0d1219"; g.shadowColor = lit ? `rgb(${r},${gg},${b})` : "transparent"; g.shadowBlur = lit ? 14 : 0; g.fill(); g.shadowBlur = 0;
+    if (lit) { g.fillStyle = `rgba(${r},${gg},${b},.86)`; g.fill(); }
+    g.fillStyle = "rgba(255,255,255,.05)"; g.fillRect(R.x + 3, R.y + 2, R.w - 6, Math.min(4, R.h * .12));
+    if (editing && sel.has(R.k.index)) { g.lineWidth = 2; g.strokeStyle = "#ffffff"; g.stroke(); }
+    else if (editing && hover === R) { g.lineWidth = 1.5; g.strokeStyle = "rgba(92,225,255,.7)"; g.stroke(); }
+    else { g.lineWidth = 1; g.strokeStyle = "rgba(255,255,255,.06)"; g.stroke(); }
+    g.fillStyle = (0.299 * r + 0.587 * gg + 0.114 * b) > 150 ? "rgba(0,0,0,.72)" : "rgba(255,255,255,.66)";
+    g.font = `600 ${Math.max(8, Math.min(11, R.h * .26))}px "Segoe UI", system-ui`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(R.k.show, R.x + R.w / 2, R.y + R.h / 2, R.w - 4);
+  }
+  if (drag?.marquee) {
+    const m = drag.marquee; g.fillStyle = "rgba(92,225,255,.1)"; g.strokeStyle = "rgba(92,225,255,.85)"; g.lineWidth = 1;
+    g.fillRect(m.x, m.y, m.w, m.h); g.strokeRect(m.x + .5, m.y + .5, m.w, m.h);
+  }
+}
+function pos(e) { const r = $("kb").getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function hit(p) { return rects.find(R => p.x >= R.x && p.x <= R.x + R.w && p.y >= R.y && p.y <= R.y + R.h) || null; }
+function applyBrush(R) {
+  if (!R) return;
+  const L = layer();
+  if (!L || L.type !== "paint" || drag.done.has(R.k.index)) return;
+  drag.done.add(R.k.index);
+  paintKeys([R.k.index], tool === "brush" ? brush : null);
+  saveSoon({ editor: S.editor }, "editor");
+}
+const kb = $("kb");
+kb.addEventListener("pointerdown", e => {
+  if (tab !== "studio" || e.button !== 0) return;
+  kb.setPointerCapture(e.pointerId);
+  const p = pos(e), R = hit(p);
+  if (tool === "picker") { if (R) { const [r, g, b] = rgbAt(R.k.index); setBrush([r, g, b].map(v => v.toString(16).padStart(2, "0")).join("")); tool = "brush"; renderTools(); renderHeader(); } return; }
+  if (tool === "select") { drag = { start: p, R, mode: e.shiftKey ? "add" : e.ctrlKey ? "toggle" : "set", base: new Set(sel) }; return; }
+  const L = layer();
+  if (!L || L.type !== "paint") { toast("Select a Paint layer first"); return; }
+  snapshot(); drag = { done: new Set() }; applyBrush(R);
+});
+kb.addEventListener("pointermove", e => {
+  const p = pos(e), R = hit(p);
+  if (hover !== R) { hover = R; if (tab === "studio" && !drag) drawKeyboard(); }
+  if (!drag) return;
+  if (drag.done) return applyBrush(R);
+  const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+  if (Math.abs(dx) + Math.abs(dy) > 4) {
+    const m = drag.marquee = { x: Math.min(p.x, drag.start.x), y: Math.min(p.y, drag.start.y), w: Math.abs(dx), h: Math.abs(dy) };
+    const inside = rects.filter(Q => Q.x < m.x + m.w && Q.x + Q.w > m.x && Q.y < m.y + m.h && Q.y + Q.h > m.y).map(Q => Q.k.index);
+    sel = drag.mode === "set" ? new Set(inside) : new Set([...drag.base, ...inside]);
+    drawKeyboard();
+  }
+});
+kb.addEventListener("pointerup", () => {
+  if (!drag) return;
+  if (drag.done) { renderProps(); renderLayers(); }
+  else if (!drag.marquee) {  // plain click
+    const i = drag.R?.k.index;
+    if (i == null) { if (drag.mode === "set") sel.clear(); }
+    else if (drag.mode === "set") sel = new Set([i]);
+    else sel.has(i) && drag.mode === "toggle" ? sel.delete(i) : sel.add(i);
+  }
+  drag = null; renderSelection(); renderProps();
+});
+kb.addEventListener("pointerleave", () => { hover = null; drawKeyboard(); });
+
+addEventListener("keydown", e => {
+  if (tab !== "studio" || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (e.ctrlKey && k === "z") { e.preventDefault(); undo(); }
+  else if (e.ctrlKey && (k === "y" || (e.shiftKey && k === "z"))) { e.preventDefault(); redo(); }
+  else if (e.ctrlKey && k === "a") { e.preventDefault(); sel = new Set(KEYS.map(k => k.index)); renderSelection(); }
+  else if (k === "delete" || k === "backspace") { if (sel.size) { snapshot(); if (paintKeys([...sel], null)) commitEditor(); } }
+  else if (k === "escape") { sel.clear(); renderSelection(); }
+  else if ({ v: 1, b: 1, e: 1, i: 1 }[k] && !e.ctrlKey) { tool = { v: "select", b: "brush", e: "eraser", i: "picker" }[k]; renderTools(); renderHeader(); }
+});
+
+// ---------------------------------------------------------------- spectrum
+function drawSpectrum(bands) {
+  const c = $("spec"); if (!c.offsetParent) return;
+  const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== Math.round(w * dpr)) { c.width = w * dpr; c.height = h * dpr; }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const n = bands.length, gap = 4, bw = (w - gap * (n - 1)) / n, grad = g.createLinearGradient(0, h, 0, 0);
+  grad.addColorStop(0, "#8b9dff"); grad.addColorStop(1, "#5ce1ff");
+  g.fillStyle = grad;
+  bands.forEach((v, i) => { const bh = Math.max(2, v * h); g.beginPath(); g.roundRect(i * (bw + gap), h - bh, bw, bh, 3); g.fill(); });
+}
+
+// ---------------------------------------------------------------- live stream
+let lastBeat = 0;
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = e => {
+    const m = JSON.parse(e.data);
+    FRAME = m.frame; if (!drag?.marquee) drawKeyboard(); drawSpectrum(m.bands);
+    $("level").style.height = (m.level * 100) + "%";
+    if (m.beat !== lastBeat) { lastBeat = m.beat; $("beat").classList.add("on"); setTimeout(() => $("beat").classList.remove("on"), 90); }
+    const kbState = m.connected ? (m.idle ? "Idle" : "Connected") : "Not found";
+    for (const id of ["kbDot", "sbKb"]) $(id).className = "dot " + (m.connected ? (m.idle ? "warn" : "ok") : "bad");
+    $("kbText").textContent = kbState; $("sbKbText").textContent = `Keyboard ${kbState.toLowerCase()}`;
+    $("kbInfo").textContent = m.connected ? `Connected · ${Math.round(m.fps)} frames/s` : `Not found${m.error ? " · " + m.error : ""}. Close GK6+ if it is open.`;
+    $("fps").textContent = `${Math.round(m.fps)} fps`;
+    $("audioDot").className = "dot " + (m.audio_error ? "bad" : m.level > 0.01 ? "ok" : "");
+    $("audioNote").textContent = m.audio_error ? `Audio error: ${m.audio_error}` : m.level > 0.01 ? "Capturing system audio." : "Play some music to see the spectrum.";
+    $("chromaDot").className = "dot " + (m.chroma ? "ok" : "");
+    $("chromaText").textContent = m.chroma ? `Chroma: ${m.chroma}` : "Chroma SDK";
+    const rgb = JSON.stringify(m.rgb);
+    if (rgb !== LIVE.rgbKey) { LIVE.rgbKey = rgb; LIVE.rgb = m.rgb; $("rgbLive").style.display = m.rgb?.connected && S.rgb_sync ? "" : "none"; if (tab === "devices") renderDevices(); }
+    if (m.chroma !== LIVE.chroma) { LIVE.chroma = m.chroma; renderHeader(); if (tab === "chroma") renderChroma(); }
+  };
+  es.onerror = () => { for (const id of ["kbDot", "sbKb"]) $(id).className = "dot bad"; $("kbText").textContent = "App closed"; $("sbKbText").textContent = "App closed"; };
+}
+
+(async () => {
+  const st = await (await fetch("/api/state")).json();
+  S = st.settings; OPT = st; ALLKEYS = st.keymap;
+  KEYS = ALLKEYS.filter(k => k.name !== "Left Space" && k.name !== "Right Space");  // extra space-bar LEDs follow Space
+  recent = store.get("recent", []); favs = new Set(store.get("favs", []));
+  tab = TAB_OF[S.source] || store.get("tab", "lighting");
+  if (!document.querySelector(`[data-tab="${tab}"]`)) tab = "lighting";
+  activeLayer = S.editor.layers.find(l => l.type === "paint")?.id ?? S.editor.layers[0]?.id ?? null;
+  setBrush(recent[0] || "FF0000"); renderSwatches();
+  renderAll(); new ResizeObserver(layout).observe($("stage")); connect();
+})();
+</script>
+</body>
+</html>

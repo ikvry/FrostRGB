@@ -1,0 +1,10 @@
+__pycache__/
+build/
+dist/
+settings.json
+settings.selftest.json
+animations/
+animations.selftest/
+log.txt
+window/
+games/*.dll
