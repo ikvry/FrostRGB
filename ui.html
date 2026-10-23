@@ -371,6 +371,9 @@
         <div class="sec">
           <h3><span>Status</span></h3>
           <p class="sub" id="rgbStatus" style="margin:0"></p>
+          <div class="row" style="margin-top:10px"><button class="btn" id="rgbRescan">Re-sync PC devices</button></div>
+          <p class="sub" style="margin:8px 0 0">Use it if fans or other devices fall back to their own lighting. FrøstRGB also does this by itself when you come back after 2+ minutes away.</p>
+          <div class="setting" style="margin-top:14px"><div>Keyboard LEDs<small>Turn off to light only the PC devices.</small></div><span class="switch"><input type="checkbox" id="kb_leds"><span></span></span></div>
         </div>
         <div class="sec" id="devSec">
           <h3><span>Device lighting</span></h3>
@@ -692,9 +695,11 @@ const RGB_MODES = { spread: ["Spread", "Each device shows the keyboard left to r
                     average: ["Average", "Every LED shows the average color of the whole keyboard."],
                     lit: ["Lit keys", "Average of the lit keys only: reactive effects still color the PC."] };
 $("rgb_sync").onchange = e => save({ rgb_sync: e.target.checked });
+$("kb_leds").onchange = e => save({ kb_leds: e.target.checked });
+$("rgbRescan").onclick = async () => { try { await fetch("/api/rgb/rescan", { method: "POST" }); toast("Re-detecting PC devices…"); } catch { toast("App disconnected"); } };
 function renderDevices() {
   const st = LIVE.rgb || {}, off = new Set(S.rgb_off || []);
-  $("rgb_sync").checked = S.rgb_sync;
+  $("rgb_sync").checked = S.rgb_sync; $("kb_leds").checked = S.kb_leds;
   $("rgbMode").replaceChildren(...Object.entries(RGB_MODES).map(([v, [n]]) => el("button", { "aria-pressed": String(S.rgb_mode === v), onclick: () => save({ rgb_mode: v }) }, n)));
   $("rgbModeHelp").textContent = RGB_MODES[S.rgb_mode][1];
   if (!$("rgbGamma").firstChild || document.activeElement?.closest("#rgbGamma") == null)

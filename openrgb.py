@@ -16,7 +16,7 @@ import effects
 PORT = 6742
 PROTOCOL = 3
 COUNT, DATA, PROTO_VER, CLIENT_NAME, LIST_UPDATED = 0, 1, 40, 50, 100
-RESIZE_ZONE, UPDATE_LEDS, SET_CUSTOM_MODE = 1000, 1050, 1100
+RESCAN, RESIZE_ZONE, UPDATE_LEDS, SET_CUSTOM_MODE = 140, 1000, 1050, 1100
 OWN = "GK104"  # our own keyboard shows up in OpenRGB too: never drive it from there
 TYPES = ["Motherboard", "RAM", "GPU", "Cooler", "LED strip", "Keyboard", "Mouse", "Mousemat", "Headset",
          "Headset stand", "Gamepad", "Light", "Speaker", "Virtual", "Storage", "Case", "Microphone",
@@ -176,9 +176,17 @@ MODES = {"spread": spread, "average": average, "lit": brightest}
 class Sync:
     """Background thread: keeps a connection to OpenRGB and mirrors frames to every enabled device."""
 
-    def __init__(self, get_frame, get_settings, make_effect=None):
-        """make_effect(name, params) builds a device's own effect (default: effects.make)."""
+    IDLE_AWAY, RESCAN_DELAY = 120, 4.0  # seconds
+
+    def __init__(self, get_frame, get_settings, make_effect=None, get_idle=None):
+        """make_effect(name, params) builds a device's own effect (default: effects.make).
+        get_idle() = seconds since the last mouse/keyboard input, used to re-take the PC devices
+        when the user comes back (MSI's service turns its lights off while idle and restores its
+        own effect afterwards, which OpenRGB only notices after a rescan)."""
         self.get_frame, self.get_settings = get_frame, get_settings
+        self.get_idle = get_idle or (lambda: 0.0)
+        self.rescan_at = None  # monotonic time of a pending rescan
+        self.away = False
         self.make_effect = make_effect or effects.make
         self.own = {}  # device name -> (config json, effect object)
         self.status = {"connected": False, "devices": [], "error": None}
@@ -191,6 +199,18 @@ class Sync:
 
     def close(self):
         self.stop.set()
+
+    def rescan(self, delay=0.0):
+        """Ask OpenRGB to re-detect devices: re-initializes boards that another app took over."""
+        self.rescan_at = time.monotonic() + delay
+
+    def _watch_idle(self):
+        idle = self.get_idle()
+        if idle > self.IDLE_AWAY:
+            self.away = True
+        elif self.away and idle < 5:
+            self.away = False
+            self.rescan(self.RESCAN_DELAY)  # give MSI time to restore its effect, then take over again
 
     def _own_frame(self, name, cfg):
         """Frame of a device's own effect, independent of the keyboard. The effect object is kept
@@ -219,6 +239,10 @@ class Sync:
                     if not s["rgb_sync"] or s["rgb_port"] != cli.sock.getpeername()[1]:
                         break
                     cli.poll()
+                    self._watch_idle()
+                    if self.rescan_at and time.monotonic() >= self.rescan_at:
+                        self.rescan_at = None
+                        cli.send(RESCAN)  # OpenRGB re-detects, then announces the list change
                     if sized != s["rgb_zones"]:  # LED counts for ARGB headers (they can't detect them)
                         for i, d in enumerate(devs):
                             for z, (zname, count, lo, hi) in enumerate(d["zones"]):
@@ -301,7 +325,7 @@ def _fake_server(devs, got):
                     reply = devs[dev]
                 if reply is not None:
                     c.sendall(b"ORGB" + struct.pack("<III", dev, pid, len(reply)) + reply)
-                if pid in (UPDATE_LEDS, SET_CUSTOM_MODE, RESIZE_ZONE):
+                if pid in (UPDATE_LEDS, SET_CUSTOM_MODE, RESIZE_ZONE, RESCAN):
                     got.append((pid, dev, body))
         except (OSError, struct.error):
             pass
@@ -374,6 +398,20 @@ def selftest():
     sync.close()
     body = next(b for p, d, b in got3 if p == UPDATE_LEDS)
     assert ok and tuple(body[6:9]) == (0, 255, 0), ("own effect drives the RAM", body[6:12])
+    got4, idle = [], [0.0]
+    port4, _ = _fake_server([_blob("Corsair Vengeance RGB DDR5", 1, [("DRAM", 10)])], got4)
+    sync = Sync(lambda: frame, lambda: dict(settings, rgb_port=port4), get_idle=lambda: idle[0])
+    sync.RESCAN_DELAY = 0.1
+    sync.start()
+    _wait(lambda: any(p == UPDATE_LEDS for p, _, _ in got4))
+    rescans = lambda: sum(1 for p, _, _ in got4 if p == RESCAN)
+    idle[0] = 500  # user away
+    time.sleep(0.3)
+    assert rescans() == 0, "no rescan while away"
+    idle[0] = 0  # back at the PC
+    ok = _wait(lambda: rescans() == 1, 3)
+    sync.close()
+    assert ok, "rescan after coming back"
     print("selftest ok")
 
 if __name__ == "__main__":

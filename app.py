@@ -58,7 +58,7 @@ DEFAULTS = {"source": "effect", "effect": "wave", "music": "equalizer", "fx": {}
             "idle_minutes": 0, "idle_action": "off", "close_to_tray": True,
             "animation": "", "anim_speed": 1.0,
             "rgb_sync": False, "rgb_mode": "spread", "rgb_off": [], "rgb_port": openrgb.PORT, "rgb_zones": {}, "rgb_gamma": 2.2,
-            "rgb_dev": {}}
+            "rgb_dev": {}, "kb_leds": True}
 
 def _check(ok):
     def run(v):
@@ -86,6 +86,7 @@ VALID = {
     "rgb_sync": _check(lambda v: isinstance(v, bool)),
     "rgb_mode": _check(lambda v: v in openrgb.MODES),
     "rgb_dev": lambda v: clean_rgb_dev(v),
+    "kb_leds": _check(lambda v: isinstance(v, bool)),
     "rgb_off": _check(lambda v: isinstance(v, list) and len(v) <= 64 and all(isinstance(x, str) and len(x) <= 200 for x in v)),
     "rgb_gamma": _num(1.0, 3.0),
     "rgb_zones": _check(lambda v: isinstance(v, dict) and len(v) <= 64 and all(
@@ -351,6 +352,8 @@ def device_loop(ctl, stop):
                     last_ping = now
                 f = ctl.render(now, now - t_prev)
                 t_prev = now
+                if not ctl.settings["kb_leds"]:
+                    f = effects.blank()  # keyboard dark, PC devices keep the effect
                 if f != last:
                     kb.frame(f)
                     last = f
@@ -362,7 +365,13 @@ def device_loop(ctl, stop):
                     frames, t_fps = 0, now
         except (OSError, TimeoutError, RuntimeError, SystemExit) as e:  # SystemExit: keyboard not found
             ctl.status.update(connected=False, fps=0.0, error=str(e))
-            time.sleep(2)
+            t_prev = end = time.monotonic()
+            end += 2
+            while not stop.is_set() and time.monotonic() < end:  # no keyboard: PC lights and the UI keep going
+                now = time.monotonic()
+                ctl.render(now, now - t_prev)
+                t_prev = now
+                time.sleep(1 / 30)
         finally:
             if kb:
                 try:
@@ -439,6 +448,10 @@ class Handler(cs.Handler):
                 return self._send({"animations": LIB.list()})
             except (ValueError, OSError, AttributeError) as e:
                 return self._send({"error": str(e)}, 400)
+        if self.path == "/api/rgb/rescan":
+            if SYNC:
+                SYNC.rescan()
+            return self._send({"ok": True})
         if self.path == "/api/settings":
             try:
                 return self._send(CTL.update(self._body()))
@@ -587,7 +600,8 @@ def main():
     server = Server(("127.0.0.1", cs.PORT), Handler)  # localhost only
     stop, quit_app = threading.Event(), threading.Event()
     SYNC = openrgb.Sync(lambda: CTL.last_frame, lambda: CTL.settings,
-                        lambda n, p: effects.make(n, p) if n in effects.EFFECTS else music.make(n, engine, p)).start()
+                        lambda n, p: effects.make(n, p) if n in effects.EFFECTS else music.make(n, engine, p),
+                        idle_seconds).start()
     dev = threading.Thread(target=device_loop, args=(CTL, stop), daemon=True)
     dev.start()
     threading.Thread(target=server.serve_forever, daemon=True).start()
