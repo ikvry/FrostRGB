@@ -100,6 +100,7 @@ class Analyzer:
     """Turns raw samples into bands / level / bass / mid / treble / beat, all 0..1."""
     BANDS = 22  # one per keyboard grid column
     FFT = 2048
+    WAVE_SPAN, WAVE_POINTS = 1024, 128  # oscilloscope: ~21 ms at 48 kHz, 8 samples averaged per point
 
     def __init__(self, rate=48000):
         self.rate = rate
@@ -117,9 +118,10 @@ class Analyzer:
         self.rms_peak = 0.01        # auto gain reference (volume)
         self.bass_avg = 0.0
         self.last_beat = 0.0
+        self.wave_peak = 1e-3       # auto gain reference (waveform)
         self.lock = threading.Lock()
         self.state = {"bands": [0.0] * self.BANDS, "level": 0.0, "bass": 0.0, "mid": 0.0, "treble": 0.0,
-                      "beat": 0, "beat_time": 0.0, "active": False}
+                      "beat": 0, "beat_time": 0.0, "active": False, "wave": [0.0] * self.WAVE_POINTS}
 
     def push(self, samples):
         if len(samples) >= self.FFT:
@@ -140,8 +142,10 @@ class Analyzer:
         mid = float(mag[self.mid_bins].mean())
         treble = float(mag[self.treble_bins].mean()) * 4
         ref = self.peak
+        wave = self._scope()
         s = self.state
         with self.lock:
+            s["wave"] = wave
             # fast attack, slow release
             s["bands"] = [max(n, o * 0.85) for n, o in zip(norm.tolist(), s["bands"])]
             for k, v in (("bass", bass), ("mid", mid), ("treble", treble)):
@@ -158,6 +162,18 @@ class Analyzer:
                 s["beat"] += 1
                 s["beat_time"] = now
             self.bass_avg = self.bass_avg * 0.95 + bass * 0.05
+
+    def _scope(self):
+        """Waveform like a triggered oscilloscope: starts at a rising zero crossing so the trace stands
+        still instead of jittering, averaged down to WAVE_POINTS (-1..1, auto gain)."""
+        buf, span = self.buf, self.WAVE_SPAN
+        last = len(buf) - span  # latest start that still leaves a full window
+        seg = buf[last - span:last + 1]
+        rising = np.where((seg[:-1] < 0) & (seg[1:] >= 0))[0]
+        start = last - span + 1 + int(rising[-1]) if len(rising) else last
+        pts = buf[start:start + span].reshape(self.WAVE_POINTS, -1).mean(axis=1)  # box low-pass
+        self.wave_peak = max(self.wave_peak * 0.995, float(np.abs(pts).max()), 1e-3)
+        return np.clip(pts / self.wave_peak * self.sensitivity, -1, 1).round(3).tolist()
 
     def snapshot(self):
         with self.lock:
@@ -215,6 +231,12 @@ def selftest():
     s = a.snapshot()
     assert s["bands"].index(max(s["bands"])) <= 2 and s["bass"] > s["treble"], "60 Hz is bass"
     assert s["beat"] == 1, "first loud bass hit is a beat"
+    for phase in (0.3, 2.1):  # any phase: the trace starts at a rising zero crossing and is full scale
+        w = Analyzer(48000)
+        w.push((0.5 * np.sin(2 * np.pi * 440 * t[:4096] + phase)).astype(np.float32)); w.update(0.0)
+        wave = w.snapshot()["wave"]
+        assert len(wave) == Analyzer.WAVE_POINTS and abs(wave[0]) < 0.35 and wave[2] > wave[0], wave[:4]
+        assert max(wave) > 0.9 and min(wave) < -0.9, "auto gain fills the screen"
     q = Analyzer(48000)
     for k in range(300):  # quiet song (1% amplitude) for 3 s: auto gain must bring the meter up
         q.push((0.01 * np.sin(2 * np.pi * 220 * t[:480] + k)).astype(np.float32)); q.update(k / 100)

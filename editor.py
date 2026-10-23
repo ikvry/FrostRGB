@@ -50,7 +50,7 @@ def validate_layer(l):
         raise ValueError("bad blend")
     if not isinstance(l.get("enabled", True), bool):
         raise ValueError("bad enabled")
-    params = effects.clean_params({k: l[k] for k in effects.PARAM_DEFAULTS if k in l}, l["type"])
+    params = effects.clean_params({k: l[k] for k in effects.param_keys(l["type"]) if k in l}, l["type"])
     return {"id": int(_num(l.get("id", 0), 0, 1e9)), "name": name, "type": l["type"], **params,
             "opacity": _num(l.get("opacity", 100), 0, 100), "blend": l.get("blend", "normal"),
             "enabled": l.get("enabled", True), "keys": sorted(set(keys)) if keys is not None else None,
@@ -82,7 +82,7 @@ class Compositor:
         for l in editor["layers"]:
             obj = None
             if l["type"] != "paint":
-                params = {k: l[k] for k in effects.PARAM_DEFAULTS}
+                params = {k: l[k] for k in effects.param_keys(l["type"]) if k in l}
                 sig = (l["type"], tuple(sorted(params.items())))
                 old = self.cache.get(l["id"])
                 if old and old[0] == sig:

@@ -2,11 +2,14 @@
 
 Lighting control for the **SKYLOONG GK104 Pro** keyboard on Windows, built to replace GK6+.
 
-- 28 effects and 10 music-sync modes (system audio via WASAPI), with palettes and per-effect options
+- 29 effects and 24 music-sync modes (system audio via WASAPI), including a real triggered oscilloscope
+- Screen Ambient: mirrors the main monitor (per key, dominant color, top colors or average)
+- 50 built-in palettes plus a Discover browser that imports palettes from Color Hunt and Lospec
 - Studio: per-key RGB editor with layers, blend modes, profiles and undo
 - Razer Chroma: emulates the Chroma SDK REST API (port 54235) so Chroma apps light the keyboard,
   and plays Synapse `.ChromaEffects` and Chroma Editor `.chroma` files
-- PC Sync: mirrors the keyboard to fans, RAM, motherboard and GPU through the [OpenRGB](https://openrgb.org) SDK server
+- PC Sync: fans, RAM, motherboard and GPU through the [OpenRGB](https://openrgb.org) SDK server, either
+  following the keyboard or running their own effect per device
 - Tray icon, start with Windows, idle dimming, color calibration
 
 ## Download

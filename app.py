@@ -31,6 +31,7 @@ import effects
 import gk104
 import music
 import openrgb
+import palette_sources
 import palettes
 import tray
 
@@ -56,7 +57,8 @@ DEFAULTS = {"source": "effect", "effect": "wave", "music": "equalizer", "fx": {}
             "gain_r": 100, "gain_g": 100, "gain_b": 100, "saturation": 100,
             "idle_minutes": 0, "idle_action": "off", "close_to_tray": True,
             "animation": "", "anim_speed": 1.0,
-            "rgb_sync": False, "rgb_mode": "spread", "rgb_off": [], "rgb_port": openrgb.PORT, "rgb_zones": {}}
+            "rgb_sync": False, "rgb_mode": "spread", "rgb_off": [], "rgb_port": openrgb.PORT, "rgb_zones": {}, "rgb_gamma": 2.2,
+            "rgb_dev": {}}
 
 def _check(ok):
     def run(v):
@@ -83,7 +85,9 @@ VALID = {
     "anim_speed": _num(0.1, 5),
     "rgb_sync": _check(lambda v: isinstance(v, bool)),
     "rgb_mode": _check(lambda v: v in openrgb.MODES),
+    "rgb_dev": lambda v: clean_rgb_dev(v),
     "rgb_off": _check(lambda v: isinstance(v, list) and len(v) <= 64 and all(isinstance(x, str) and len(x) <= 200 for x in v)),
+    "rgb_gamma": _num(1.0, 3.0),
     "rgb_zones": _check(lambda v: isinstance(v, dict) and len(v) <= 64 and all(
         isinstance(k, str) and len(k) <= 300 and isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 1000 for k, n in v.items())),
     "rgb_port": _check(lambda v: isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 65535),
@@ -105,6 +109,20 @@ VALID = {
 }
 MERGE = {"fx", "mfx"}  # updates merge per effect instead of replacing the whole map
 REBUILD = {"source", "effect", "music", "fx", "mfx", "palettes", "animation", "anim_speed"}  # need a new effect object
+
+def clean_rgb_dev(v):
+    """Per PC device lighting: {device name: {mode: keyboard|effect, effect, params}}."""
+    if not isinstance(v, dict) or len(v) > 64:
+        raise ValueError("bad rgb_dev")
+    out = {}
+    for name, c in v.items():
+        if not (isinstance(name, str) and 0 < len(name) <= 200 and isinstance(c, dict)):
+            raise ValueError("bad rgb_dev entry")
+        mode, fx = c.get("mode"), c.get("effect", "wave")
+        if mode not in ("keyboard", "effect") or (fx not in effects.EFFECTS and fx not in music.MODES):
+            raise ValueError("bad rgb_dev mode or effect")
+        out[name] = {"mode": mode, "effect": fx, "params": effects.clean_params(c.get("params", {}), fx)}
+    return out
 
 def clean(changes):
     out, bad = {}, []
@@ -358,6 +376,11 @@ def device_loop(ctl, stop):
 # ------------------------------------------------------------------ HTTP: Chroma REST + UI API
 
 CTL = None
+
+def screen_status():
+    """Capture warning for the Screen effect; screen.py is only imported once the effect is used."""
+    mod = sys.modules.get("screen")
+    return mod.CAPTURE.status() if mod else None
 SYNC = None  # OpenRGB mirror, started in main()
 
 class Server(cs.ThreadingHTTPServer):
@@ -387,6 +410,15 @@ class Handler(cs.Handler):
                                "animations": LIB.list(), "app": APP_NAME})
         if self.path == "/api/stream":
             return self._stream()
+        if self.path.startswith("/api/palettes/discover?"):
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                res = palette_sources.discover(q.get("source", [""])[0], q.get("q", [""])[0], q.get("page", ["0"])[0])
+                return self._send({"results": res})
+            except ValueError as e:
+                return self._send({"error": str(e)}, 400)
+            except OSError as e:  # offline or the site changed
+                return self._send({"error": f"could not reach the palette site ({e})"}, 502)
         super().do_GET()
 
     def do_POST(self):
@@ -429,6 +461,7 @@ class Handler(cs.Handler):
                        "bands": [round(v, 3) for v in a["bands"]], "level": round(a["level"], 3),
                        "beat": a["beat"], "audio_error": CTL.engine.error, "chroma": CTL.chroma_title(),
                        "rgb": SYNC.status if SYNC else None,
+                       "screen": screen_status(),
                        **CTL.status}
                 self.wfile.write(f"data: {json.dumps(msg)}\n\n".encode())
                 self.wfile.flush()
@@ -511,7 +544,8 @@ def selftest():
         for bad in ({"effect": "nope"}, {"fx": {"wave": {"speed": 99}}}, {"fx": {"nope": {}}}, {"evil": 1},
                     {"editor": {"layers": [{"type": "x"}]}}, {"profiles": {"": ed}}, {"palettes": {"fire": ["000000", "FFFFFF"]}},
                     {"idle_action": "explode"}, {"autostart": "yes"},
-                    {"rgb_mode": "x"}, {"rgb_off": "GPU"}, {"rgb_port": 0}):
+                    {"rgb_mode": "x"}, {"rgb_off": "GPU"}, {"rgb_port": 0},
+                    {"rgb_dev": {"RAM": {"mode": "effect", "effect": "nope"}}}, {"rgb_dev": {"RAM": {"mode": "x"}}}):
             try:
                 CTL.update(bad)
                 raise AssertionError(f"accepted {bad}")
@@ -552,7 +586,8 @@ def main():
     CTL = Controller(engine)
     server = Server(("127.0.0.1", cs.PORT), Handler)  # localhost only
     stop, quit_app = threading.Event(), threading.Event()
-    SYNC = openrgb.Sync(lambda: CTL.last_frame, lambda: CTL.settings).start()
+    SYNC = openrgb.Sync(lambda: CTL.last_frame, lambda: CTL.settings,
+                        lambda n, p: effects.make(n, p) if n in effects.EFFECTS else music.make(n, engine, p)).start()
     dev = threading.Thread(target=device_loop, args=(CTL, stop), daemon=True)
     dev.start()
     threading.Thread(target=server.serve_forever, daemon=True).start()

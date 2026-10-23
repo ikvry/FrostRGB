@@ -5,6 +5,7 @@ SDK server (Settings > SDK Server > Start, default 127.0.0.1:6742) with its bina
   header: b"ORGB", u32 device index, u32 packet id, u32 payload size (little endian)
 Stdlib only. Protocol version 3 is requested so the controller layout stays fixed.
 """
+import json
 import socket
 import struct
 import threading
@@ -133,18 +134,22 @@ class Client:
     def close(self):
         self.sock.close()
 
+def chroma(c):
+    return max(c) - min(c)
+
 def spread(frame, n):
-    """n colors sampled left to right across the keyboard (column averages), so waves travel."""
+    """n colors sampled left to right across the keyboard, so waves travel. Each LED takes the most
+    colorful key of its slice: averaging a column mixes different hues into a whitish pastel."""
     if n <= 0:
         return []
-    cols = [[0, 0, 0, 0] for _ in range(n)]
+    best = [None] * n
     for i, x in effects.XN.items():
-        c = cols[min(n - 1, int(x * n))]
-        r, g, b = frame[i]
-        c[0] += r; c[1] += g; c[2] += b; c[3] += 1
+        k, c = min(n - 1, int(x * n)), frame[i]
+        if best[k] is None or (chroma(c), max(c)) > (chroma(best[k]), max(best[k])):
+            best[k] = c
     out, last = [], (0, 0, 0)
-    for r, g, b, k in cols:
-        last = (r // k, g // k, b // k) if k else last  # more LEDs than columns: repeat neighbor
+    for c in best:
+        last = c if c is not None else last  # more LEDs than columns: repeat neighbor
         out.append(last)
     return out
 
@@ -154,19 +159,28 @@ def average(frame, n):
     return [c] * n
 
 def brightest(frame, n):
-    """Average of the lit keys only: a few lit keys still show their color on the fans."""
+    """Lit keys only, weighted by how colorful they are, so a few lit keys still color the fans."""
     lit = [frame[i] for i in effects.XN if max(frame[i]) > 20]
     if not lit:
         return [(0, 0, 0)] * n
-    return [tuple(sum(c[ch] for c in lit) // len(lit) for ch in range(3))] * n
+    w = [chroma(c) ** 2 + 1 for c in lit]
+    return [tuple(int(sum(c[ch] * k for c, k in zip(lit, w)) / sum(w)) for ch in range(3))] * n
+
+def gamma_table(g):
+    """Typical ARGB LEDs (WS2812) are linear: low values look far too bright and wash colors to white.
+    The keyboard already looks right, so PC devices get this curve (2.2 = sRGB-like)."""
+    return [round(255 * (v / 255) ** g) for v in range(256)]
 
 MODES = {"spread": spread, "average": average, "lit": brightest}
 
 class Sync:
     """Background thread: keeps a connection to OpenRGB and mirrors frames to every enabled device."""
 
-    def __init__(self, get_frame, get_settings):
+    def __init__(self, get_frame, get_settings, make_effect=None):
+        """make_effect(name, params) builds a device's own effect (default: effects.make)."""
         self.get_frame, self.get_settings = get_frame, get_settings
+        self.make_effect = make_effect or effects.make
+        self.own = {}  # device name -> (config json, effect object)
         self.status = {"connected": False, "devices": [], "error": None}
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -177,6 +191,15 @@ class Sync:
 
     def close(self):
         self.stop.set()
+
+    def _own_frame(self, name, cfg):
+        """Frame of a device's own effect, independent of the keyboard. The effect object is kept
+        while its config is unchanged so animations run smoothly."""
+        key = json.dumps(cfg, sort_keys=True)
+        hit = self.own.get(name)
+        if not hit or hit[0] != key:
+            hit = self.own[name] = (key, self.make_effect(cfg["effect"], cfg["params"]))
+        return hit[1].frame(time.monotonic())
 
     def _run(self):
         while not self.stop.is_set():
@@ -189,6 +212,7 @@ class Sync:
             try:
                 cli = Client(port=s["rgb_port"])
                 devs, custom, last, sized = cli.devices(), set(), {}, None
+                gamma = (None, None)
                 self.status.update(connected=True, devices=devs, error=None)
                 while not self.stop.is_set():
                     s = self.get_settings()
@@ -204,17 +228,25 @@ class Sync:
                                     cli.dirty = True
                         sized = dict(s["rgb_zones"])
                     if cli.dirty:
+                        names = [d["name"] for d in devs]
                         devs, custom, last = cli.devices(), set(), {}
                         self.status["devices"] = devs
+                        if [d["name"] for d in devs] != names:
+                            sized = None  # OpenRGB found a device late (boot): apply its LED counts now
                     frame, fn = self.get_frame(), MODES[s["rgb_mode"]]
+                    if gamma[0] != s["rgb_gamma"]:
+                        gamma = (s["rgb_gamma"], gamma_table(s["rgb_gamma"]))
                     for i, d in enumerate(devs):
                         if d["name"] in s["rgb_off"] or not d["leds"] or OWN in d["name"].upper():
                             continue
+                        cfg = s["rgb_dev"].get(d["name"])
+                        src = self._own_frame(d["name"], cfg) if cfg and cfg["mode"] == "effect" else frame
                         if i not in custom:
                             cli.set_custom(i)  # direct mode, otherwise the device ignores our colors
                             custom.add(i)
                         # per zone: every fan / strip / RAM stick shows the whole keyboard, not a slice of the board
-                        colors = [c for z in d["zones"] for c in fn(frame, z[1])]
+                        g = gamma[1]
+                        colors = [(g[r], g[gg], g[b]) for z in d["zones"] for r, gg, b in fn(src, z[1])]
                         if last.get(i) != colors:
                             cli.set_leds(i, colors)
                             last[i] = colors
@@ -236,25 +268,24 @@ def _blob(name, kind, zones):
     body = struct.pack("<i", kind) + text(name) + text("Vendor") + text("d") + text("v") + text("s") + text("l")
     body += struct.pack("<Hi", 1, 0) + mode
     body += struct.pack("<H", len(zones))
-    for zname, n in zones:
-        body += text(zname) + struct.pack("<iIII", 0, n, n, n) + struct.pack("<H", 12) + struct.pack("<III", 1, 1, 0)
-    total = sum(n for _, n in zones)
+    for z in zones:
+        zname, n, lo, hi = (*z, z[1], z[1]) if len(z) == 2 else z
+        body += text(zname) + struct.pack("<iIII", 0, lo, hi, n) + struct.pack("<H", 12) + struct.pack("<III", 1, 1, 0)
+    total = sum(z[1] for z in zones)
     body += struct.pack("<H", total) + b"".join(text(f"LED {k}") + struct.pack("<I", k) for k in range(total))
     body += struct.pack("<H", total) + b"\0" * 4 * total
     return struct.pack("<I", len(body) + 4) + body
 
-def selftest():
-    import gk104
-    devs = [_blob("Corsair Vengeance RGB DDR5", 1, [("DRAM", 10)]), _blob("MSI X870", 0, [("JRAINBOW1", 8), ("Onboard", 2)]),
-            _blob("Skyloong GK104 Pro", 5, [("Keyboard", 106)])]
-    got = []
+def _fake_server(devs, got):
+    """Minimal OpenRGB SDK server for tests. Returns (port, push) where push() announces a device change."""
     srv = socket.socket()
     srv.bind(("127.0.0.1", 0))
     srv.listen(1)
-    port = srv.getsockname()[1]
+    conn = []
 
     def serve():
         c, _ = srv.accept()
+        conn.append(c)
         def recv(n):
             b = b""
             while len(b) < n:
@@ -270,16 +301,31 @@ def selftest():
                     reply = devs[dev]
                 if reply is not None:
                     c.sendall(b"ORGB" + struct.pack("<III", dev, pid, len(reply)) + reply)
-                if pid in (UPDATE_LEDS, SET_CUSTOM_MODE):
+                if pid in (UPDATE_LEDS, SET_CUSTOM_MODE, RESIZE_ZONE):
                     got.append((pid, dev, body))
         except (OSError, struct.error):
             pass
     threading.Thread(target=serve, daemon=True).start()
+    return srv.getsockname()[1], lambda: conn[0].sendall(b"ORGB" + struct.pack("<III", 0, LIST_UPDATED, 0))
+
+def _wait(cond, secs=5):
+    end = time.monotonic() + secs
+    while not cond() and time.monotonic() < end:
+        time.sleep(0.05)
+    return cond()
+
+def selftest():
+    import gk104
+    devs = [_blob("Corsair Vengeance RGB DDR5", 1, [("DRAM", 10)]), _blob("MSI X870", 0, [("JRAINBOW1", 8), ("Onboard", 2)]),
+            _blob("Skyloong GK104 Pro", 5, [("Keyboard", 106)])]
+    got = []
+    port, _ = _fake_server(devs, got)
 
     frame = effects.blank()
     for k in gk104.KEYMAP:
         frame[k["index"]] = (255, 0, 0) if effects.XN[k["index"]] < 0.5 else (0, 0, 255)
-    settings = {"rgb_sync": True, "rgb_port": port, "rgb_mode": "spread", "rgb_off": [], "rgb_zones": {"MSI X870|Onboard": 2}}
+    settings = {"rgb_sync": True, "rgb_port": port, "rgb_mode": "spread", "rgb_off": [], "rgb_zones": {"MSI X870|Onboard": 2},
+                "rgb_gamma": 1.0, "rgb_dev": {}}
     sync = Sync(lambda: frame, lambda: settings).start()
     for _ in range(100):
         if sum(1 for p, _, _ in got if p == UPDATE_LEDS) >= 2:
@@ -300,6 +346,34 @@ def selftest():
     assert leds[0] == (255, 0, 0) and leds[7] == (0, 0, 255) and leds[8] == (255, 0, 0) and leds[9] == (0, 0, 255), "each zone gets the full gradient"
     assert average(frame, 2)[0][0] > 0 and brightest(effects.blank(), 3) == [(0, 0, 0)] * 3
     assert len(spread(frame, 300)) == 300 and spread(frame, 0) == []
+    mixed = effects.blank()
+    for k in gk104.KEYMAP:  # every column has a red key and a pale key: LEDs must stay red, not pink
+        mixed[k["index"]] = (255, 0, 0) if k["row"] == 2 else (200, 200, 200)
+    assert all(c == (255, 0, 0) for c in spread(mixed, 8)), spread(mixed, 8)
+    t = gamma_table(2.2)
+    assert t[0] == 0 and t[255] == 255 and t[128] < 60, "mid values dimmed on linear LEDs"
+
+    # boot race: OpenRGB lists the board only after we connected; its LED counts must still be applied
+    devs2, got2 = [_blob("Corsair Vengeance RGB DDR5", 1, [("DRAM", 10)])], []
+    port2, push = _fake_server(devs2, got2)
+    settings2 = dict(settings, rgb_port=port2, rgb_zones={"MSI MYSTIC LIGHT|JARGB 1": 8})
+    sync = Sync(lambda: frame, lambda: settings2).start()
+    assert _wait(lambda: any(p == UPDATE_LEDS for p, _, _ in got2)), "syncing the RAM"
+    devs2.append(_blob("MSI MYSTIC LIGHT", 0, [("JAF", 0, 0, 240), ("JARGB 1", 0, 0, 240)]))
+    push()
+    ok = _wait(lambda: any(p == RESIZE_ZONE and d == 1 and struct.unpack("<ii", b) == (1, 8) for p, d, b in got2))
+    sync.close()
+    assert ok, ("late board gets its LED count", got2[-5:])
+
+    # independent lighting: the RAM runs its own effect, not the keyboard's colors
+    got3 = []
+    port3, _ = _fake_server([_blob("Corsair Vengeance RGB DDR5", 1, [("DRAM", 10)])], got3)
+    own = {"mode": "effect", "effect": "static", "params": effects.clean_params({"color": "00FF00"}, "static")}
+    sync = Sync(lambda: frame, lambda: dict(settings, rgb_port=port3, rgb_dev={"Corsair Vengeance RGB DDR5": own})).start()
+    ok = _wait(lambda: any(p == UPDATE_LEDS for p, _, _ in got3))
+    sync.close()
+    body = next(b for p, d, b in got3 if p == UPDATE_LEDS)
+    assert ok and tuple(body[6:9]) == (0, 255, 0), ("own effect drives the RAM", body[6:12])
     print("selftest ok")
 
 if __name__ == "__main__":

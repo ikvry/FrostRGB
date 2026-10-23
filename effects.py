@@ -14,6 +14,8 @@ import re
 import threading
 import time
 
+import numpy as np
+
 import gk104
 import palettes
 
@@ -81,13 +83,32 @@ PARAM_DEFAULTS = {"color": "FF0000", "color2": "0000FF", "speed": 1.0, "palette"
                   "direction": "right", "size": 1.0, "density": 1.0, "glow": 0.0}
 HEX = re.compile(r"^[0-9A-Fa-f]{6}$")
 
+def param_keys(name):
+    """All param names an effect stores: the shared ones plus its own extras (META "extra")."""
+    return [*PARAM_DEFAULTS, *EXTRA.get(name, {})]
+
+def _clean_extra(spec, k, v):
+    if spec["type"] == "choice":
+        if v not in [o for o, _ in spec["options"]]:
+            raise ValueError(f"bad {k}")
+    elif spec["type"] == "bool":
+        if not isinstance(v, bool):
+            raise ValueError(f"bad {k}")
+    elif isinstance(v, bool) or not isinstance(v, (int, float)) or not spec["min"] <= v <= spec["max"]:
+        raise ValueError(f"bad {k}")
+    return v
+
 def clean_params(p, name=None):
     """Validated params with defaults. Unknown keys are dropped; bad values raise ValueError."""
     if not isinstance(p, dict):
         raise ValueError("params must be an object")
     out = dict(PARAM_DEFAULTS)
     out.update(DEFAULTS.get(name, {}))
+    extra = EXTRA.get(name, {})
     for k, v in p.items():
+        if k in extra:
+            out[k] = _clean_extra(extra[k], k, v)
+            continue
         if k not in PARAM_DEFAULTS:
             continue
         if k in ("color", "color2"):
@@ -684,13 +705,113 @@ class Heatmap(Effect):
                 f[i] = scale(self.pal.sample(v, cyclic=False), 0.45 + 0.55 * v)  # cold keys stay visible
         return f
 
+_KEYMAP = {k["index"]: k for k in KEYS}
+
+class Screen(Effect):
+    """Ambient light from the main monitor. Modes: mirror (each key shows the screen above it),
+    dominant (the most prominent color), top colors (the 3 most prominent, laid out where they are
+    on screen), average. Extras: area, black-bar crop, saturation, min brightness. speed = smoothing."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        import screen  # Windows GDI; imported here so effects.py stays importable anywhere
+        self.cap = screen.CAPTURE
+        # each key's rectangle as fractions of the (possibly cropped) image: y0, y1, x0, x1
+        self.rects = {i: (max(0.0, YN[i] - k["h"] / 2 / H), min(1.0, YN[i] + k["h"] / 2 / H),
+                          max(0.0, XN[i] - k["w"] / 2 / W), min(1.0, XN[i] + k["w"] / 2 / W))
+                      for i, k in _KEYMAP.items()}
+        self.cur = {}
+
+    def _area(self, img):
+        if self.p["crop"]:  # letterbox / pillarbox: drop edge rows/cols that are (almost) black
+            lum = img.mean(axis=2)
+            rows, cols = np.where(lum.max(axis=1) > 16)[0], np.where(lum.max(axis=0) > 16)[0]
+            if len(rows) >= 3 and len(cols) >= 3:
+                img = img[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
+        if self.p["area"] == "center":  # middle 60%: skips HUDs, taskbar, subtitles
+            h, w = img.shape[:2]
+            img = img[int(h * 0.2):max(int(h * 0.2) + 1, int(h * 0.8)), int(w * 0.2):max(int(w * 0.2) + 1, int(w * 0.8))]
+        return img
+
+    @staticmethod
+    def peaks(img, n):
+        """Up to n prominent colors: hue histogram weighted by saturation^2 * value, so vivid areas win
+        over gray/dark ones. Returns [(rgb, x_center 0..1)], strongest first."""
+        h, w = img.shape[:2]
+        px = img.reshape(-1, 3).astype(np.float32)
+        mx, mn = px.max(axis=1), px.min(axis=1)
+        weight = ((mx - mn) / np.maximum(mx, 1)) ** 2 * (mx / 255)
+        r, g, b = px[:, 0], px[:, 1], px[:, 2]
+        hue = (np.degrees(np.arctan2(np.sqrt(3) * (g - b), 2 * r - g - b)) % 360) / 360
+        bins = (hue * 24).astype(int) % 24
+        hist = np.bincount(bins, weights=weight, minlength=24)
+        xs = np.tile(np.arange(w) / max(1, w - 1), h)
+        out, used = [], set()
+        for k in np.argsort(hist)[::-1]:
+            if len(out) == n or hist[k] <= 1e-6 or hist[k] < hist.max() * 0.15:
+                break
+            fam = {(k - 1) % 24, int(k), (k + 1) % 24}
+            if fam & used:
+                continue  # next to a hue already picked: same color family
+            sel = np.isin(bins, list(fam))
+            wk = weight[sel]
+            out.append((tuple((px[sel] * wk[:, None]).sum(0) / wk.sum()), float((xs[sel] * wk).sum() / wk.sum())))
+            used |= fam
+        return out
+
+    def frame(self, now):
+        img, f = self.cap.latest(), blank()
+        if img is None:
+            return f
+        img = self._area(img)
+        h, w = img.shape[:2]
+        mode = self.p["smode"]
+        avg = tuple(img.reshape(-1, 3).mean(0))
+        if mode == "mirror":
+            colors = {}
+            for i, (y0, y1, x0, x1) in self.rects.items():
+                ys = slice(int(y0 * h), max(int(y0 * h) + 1, int(y1 * h)))
+                xs = slice(int(x0 * w), max(int(x0 * w) + 1, int(x1 * w)))
+                colors[i] = tuple(img[ys, xs].reshape(-1, 3).mean(0))
+        elif mode == "average":
+            colors = dict.fromkeys(_KEYMAP, avg)
+        else:
+            pk = self.peaks(img, 1 if mode == "dominant" else 3)
+            if not pk:  # gray / dark scene: nothing stands out
+                colors = dict.fromkeys(_KEYMAP, avg)
+            elif mode == "dominant" or len(pk) == 1:
+                colors = dict.fromkeys(_KEYMAP, pk[0][0])
+            else:  # top colors, placed left to right where they sit on screen
+                pts = sorted((x, c) for c, x in pk)
+                colors = {}
+                for i in _KEYMAP:
+                    x = min(max(XN[i], pts[0][0]), pts[-1][0])
+                    k = next(j for j in range(len(pts) - 1) if x <= pts[j + 1][0])
+                    t = (x - pts[k][0]) / max(1e-6, pts[k + 1][0] - pts[k][0])
+                    colors[i] = tuple(p0 + (p1 - p0) * t for p0, p1 in zip(pts[k][1], pts[k + 1][1]))
+        a = 1 - math.exp(-self.dt(now) * 10 * self.speed)
+        sat, floor = self.p["sat"], self.p["floor"] * 255
+        for i, (r, g, b) in colors.items():
+            lum = (r + g + b) / 3
+            r, g, b = (min(255.0, max(0.0, lum + (c - lum) * sat)) for c in (r, g, b))
+            m = max(r, g, b)
+            if 0 < m < floor:  # dark scenes keep their hue instead of going off
+                r, g, b = (c * floor / m for c in (r, g, b))
+            o = self.cur.get(i, (r, g, b))
+            o = self.cur[i] = tuple(p0 + (n - p0) * a for p0, n in zip(o, (r, g, b)))
+            f[i] = (int(o[0]), int(o[1]), int(o[2]))
+        return f
+
 # ------------------------------------------------------------------ registry
 
 # colors: how many own colors the effect uses; palette: default palette ("" = own colors, None = no palette);
 # opts: extra controls shown in the UI; reactive: reacts to typing.
-def _m(cls, desc, colors=0, palette="rainbow", opts=(), reactive=False, **defaults):
+def _m(cls, desc, colors=0, palette="rainbow", opts=(), reactive=False, extra=None, **defaults):
+    """extra: effect-only params {key: {label, type: choice|bool|num, default, options | min/max/step}}."""
+    extra = extra or {}
     return cls, {"desc": desc, "colors": colors, "palette": palette, "opts": list(opts), "reactive": reactive,
-                 "defaults": {**({"palette": palette} if palette is not None else {}), **defaults}}
+                 "extra": extra, "defaults": {**({"palette": palette} if palette is not None else {}), **defaults,
+                                              **{k: e["default"] for k, e in extra.items()}}}
 
 _REG = {
     "static":     _m(Static, "One solid color", 1, None),
@@ -721,10 +842,18 @@ _REG = {
     "splash":     _m(Splash, "Color splash while typing", opts=("size", "glow"), reactive=True),
     "cross":      _m(Cross, "Row and column of the key light up", 1, "", opts=("size", "glow"), reactive=True),
     "heatmap":    _m(Heatmap, "Most used keys heat up", palette="heat", opts=("size",), reactive=True),
+    "screen":     _m(Screen, "Mirrors the colors of your main monitor (ambient light)", palette=None, extra={
+        "smode": {"label": "Mode", "type": "choice", "default": "mirror", "options": [
+            ["mirror", "Mirror"], ["dominant", "Dominant"], ["palette", "Top colors"], ["average", "Average"]]},
+        "area": {"label": "Area", "type": "choice", "default": "full", "options": [["full", "Whole screen"], ["center", "Center"]]},
+        "crop": {"label": "Ignore black bars", "type": "bool", "default": True},
+        "sat": {"label": "Saturation", "type": "num", "min": 0.0, "max": 2.5, "step": 0.05, "default": 1.35, "fmt": "pct"},
+        "floor": {"label": "Min brightness", "type": "num", "min": 0.0, "max": 0.5, "step": 0.01, "default": 0.0, "fmt": "pct"}}),
 }
 EFFECTS = {k: v[0] for k, v in _REG.items()}
 META = {k: v[1] for k, v in _REG.items()}
-DEFAULTS = {k: v["defaults"] for k, v in META.items()}  # per-name param defaults (music.py adds its own)
+DEFAULTS = {k: v["defaults"] for k, v in META.items()}
+EXTRA = {k: v["extra"] for k, v in META.items() if v["extra"]}  # per-name param defaults (music.py adds its own)
 for _name, _cls in EFFECTS.items():
     _cls.NAME = _name
 
@@ -751,6 +880,40 @@ def play(kb, effect, seconds):
     kb.on_key = None
 
 def selftest():
+    import numpy as np
+    class FakeCap:  # left half red, right half blue, top rows green
+        img = np.zeros((24, 88, 3), np.uint8)
+        img[:, :44] = (255, 0, 0)
+        img[:, 44:] = (0, 0, 255)
+        img[:3] = (0, 255, 0)
+        def latest(self): return self.img
+    sc = make("screen")
+    sc.cap = FakeCap()
+    f = sc.frame(1.0)
+    k = gk104.KEY_INDEX
+    assert f[k["a"]][0] > 200 and f[k["a"]][2] < 50, ("left of screen -> left keys", f[k["a"]])
+    assert f[k["keypad 5"]][2] > 200, "right of screen -> numpad"
+    assert f[k["escape"]][1] > 150, "top of screen -> F row"
+    sc = make("screen", {"smode": "dominant", "crop": False})
+    sc.cap = FakeCap()
+    d = sc.frame(1.0)[k["a"]]
+    assert d[0] > 200 or d[2] > 200, ("dominant picks a vivid color, not the mix", d)
+    sc = make("screen", {"smode": "palette", "crop": False})
+    sc.cap = FakeCap()
+    f = sc.frame(1.0)
+    assert f[k["escape"]] != f[k["keypad 5"]], "top colors spread across the board"
+    letterbox = FakeCap()
+    letterbox.img = np.zeros((24, 88, 3), np.uint8)
+    letterbox.img[6:18] = (0, 0, 255)  # movie with black bars
+    sc = make("screen", {"crop": True})
+    sc.cap = letterbox
+    assert sc.frame(1.0)[k["escape"]][2] > 200, "black bars cropped: top row shows the movie"
+    for bad in ({"smode": "x"}, {"sat": 9}, {"crop": 1}):
+        try:
+            clean_params(bad, "screen")
+            raise AssertionError(bad)
+        except ValueError:
+            pass
     w = gk104.KEY_INDEX["w"]
     for name in EFFECTS:
         for pal in ("rainbow", "", "fire"):
