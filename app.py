@@ -473,6 +473,7 @@ class Handler(cs.Handler):
                 msg = {"frame": "".join(f"{r:02x}{g:02x}{b:02x}" for r, g, b in CTL.last_frame),
                        "bands": [round(v, 3) for v in a["bands"]], "level": round(a["level"], 3),
                        "beat": a["beat"], "audio_error": CTL.engine.error, "chroma": CTL.chroma_title(),
+                       "audio_device": getattr(CTL.engine, "device", None),
                        "rgb": SYNC.status if SYNC else None,
                        "screen": screen_status(),
                        **CTL.status}

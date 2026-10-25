@@ -1,6 +1,7 @@
 """System audio capture (WASAPI loopback via ctypes) + music analysis (numpy).
 
-Captures whatever the default playback device is playing; no extra packages.
+Captures what the PC is playing (the default output, or whichever output actually has sound);
+no extra packages.
 
   python audio.py            # prints live level / bass / beat for 15 s
   python audio.py --selftest # analysis on synthetic signals, no audio device needed
@@ -9,6 +10,7 @@ import ctypes
 import threading
 import time
 import uuid
+import winreg
 from ctypes import wintypes
 
 import numpy as np
@@ -22,6 +24,7 @@ CLSID_MMDeviceEnumerator = _guid("BCDE0395-E52F-467C-8E3D-C4579291692E")
 IID_IMMDeviceEnumerator = _guid("A95664D2-9614-4F35-A746-DE8DB63617E6")
 IID_IAudioClient = _guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2")
 IID_IAudioCaptureClient = _guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317")
+IID_IAudioMeterInformation = _guid("C02216F6-8C67-4B5B-9D00-D008E73E0064")
 KSDATAFORMAT_FLOAT = uuid.UUID("00000003-0000-0010-8000-00AA00389B71").bytes_le
 LOOPBACK, CLSCTX_ALL, BUFFER_SILENT = 0x00020000, 0x17, 0x2
 
@@ -40,15 +43,74 @@ def _release(obj):
         vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
         ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])(obj)
 
-class Loopback:
-    """Reads float32 mono samples from the default render device. Use from a single thread."""
+P = ctypes.c_void_p
 
-    def __init__(self):
+def _dev_id(dev):
+    s = ctypes.c_wchar_p()
+    _vcall(dev, 5, [P], ctypes.byref(s))  # IMMDevice::GetId
+    try:
+        return s.value
+    finally:
+        _ole.CoTaskMemFree(ctypes.cast(s, P))
+
+def device_name(dev_id):
+    """'Speakers (Focusrite USB Audio)' from the endpoint's registry properties."""
+    try:
+        key = dev_id.split("}.")[-1]
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            rf"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{key}\Properties") as k:
+            name = winreg.QueryValueEx(k, "{a45c254e-df1c-4efd-8020-67d146a850e0},2")[0]
+            try:
+                return f"{name} ({winreg.QueryValueEx(k, '{b3f8fa53-0004-438e-9003-51a46e139bfc},6')[0]})"
+            except OSError:
+                return name
+    except OSError:
+        return "audio output"
+
+def default_id(enum):
+    dev = P()
+    _vcall(enum, 4, [ctypes.c_int, ctypes.c_int, P], 0, 0, ctypes.byref(dev))  # eRender, eConsole
+    try:
+        return _dev_id(dev)
+    finally:
+        _release(dev)
+
+def render_peaks(enum):
+    """{device id: current peak 0..1} for every active output device (Windows' own volume meters)."""
+    coll, n, out = P(), ctypes.c_uint(), {}
+    _vcall(enum, 3, [ctypes.c_int, wintypes.DWORD, P], 0, 1, ctypes.byref(coll))  # eRender, ACTIVE
+    try:
+        _vcall(coll, 3, [P], ctypes.byref(n))
+        for k in range(n.value):
+            dev, meter, v = P(), P(), ctypes.c_float()
+            try:
+                _vcall(coll, 4, [ctypes.c_uint, P], k, ctypes.byref(dev))
+                _vcall(dev, 3, [P, wintypes.DWORD, P, P], IID_IAudioMeterInformation, CLSCTX_ALL, None, ctypes.byref(meter))
+                _vcall(meter, 3, [P], ctypes.byref(v))  # GetPeakValue
+                out[_dev_id(dev)] = v.value
+            except OSError:
+                pass
+            finally:
+                _release(meter)
+                _release(dev)
+    finally:
+        _release(coll)
+    return out
+
+class Loopback:
+    """Reads float32 mono samples from one render device (default if device_id is None).
+    Use from a single thread."""
+
+    def __init__(self, device_id=None):
         _ole.CoInitializeEx(None, 0)  # multithreaded apartment for this thread
-        P = ctypes.c_void_p
         self.enum, self.dev, self.client, self.capture = P(), P(), P(), P()
         _ole.CoCreateInstance(CLSID_MMDeviceEnumerator, None, CLSCTX_ALL, IID_IMMDeviceEnumerator, ctypes.byref(self.enum))
-        _vcall(self.enum, 4, [ctypes.c_int, ctypes.c_int, P], 0, 0, ctypes.byref(self.dev))  # eRender, eConsole
+        if device_id:
+            _vcall(self.enum, 5, [ctypes.c_wchar_p, P], device_id, ctypes.byref(self.dev))  # GetDevice
+        else:
+            _vcall(self.enum, 4, [ctypes.c_int, ctypes.c_int, P], 0, 0, ctypes.byref(self.dev))  # eRender, eConsole
+        self.id = _dev_id(self.dev)
+        self.name = device_name(self.id)
         _vcall(self.dev, 3, [P, wintypes.DWORD, P, P], IID_IAudioClient, CLSCTX_ALL, None, ctypes.byref(self.client))
         fmt = P()
         _vcall(self.client, 8, [P], ctypes.byref(fmt))  # GetMixFormat
@@ -185,6 +247,8 @@ class AudioEngine:
     def __init__(self):
         self.analyzer = Analyzer()
         self.error = None
+        self.device = None   # name of the output being captured
+        self.want = None     # device id to capture; None = Windows default
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
@@ -196,15 +260,23 @@ class AudioEngine:
         while not self.stop.is_set():
             lb = None
             try:
-                lb = Loopback()
+                lb = Loopback(self.want)
                 if lb.rate != self.analyzer.rate:
                     sens = self.analyzer.sensitivity
                     self.analyzer = Analyzer(lb.rate)
                     self.analyzer.sensitivity = sens
-                self.error = None
+                self.error, self.device = None, lb.name
+                checked, silent_since = time.monotonic(), None
                 while not self.stop.is_set():
-                    self.analyzer.push(lb.read())
-                    self.analyzer.update(time.monotonic())
+                    x = lb.read()
+                    now = time.monotonic()
+                    self.analyzer.push(x)
+                    self.analyzer.update(now)
+                    silent_since = None if len(x) and float(np.abs(x).max()) > 1e-4 else (silent_since or now)
+                    if now - checked > 1:
+                        checked = now
+                        if self._should_switch(lb, silent_since, now):
+                            break  # reopen on the new device right away
                     time.sleep(0.01)
             except OSError as e:  # e.g. output device changed or unplugged: reopen the new default
                 self.error = str(e)
@@ -212,6 +284,22 @@ class AudioEngine:
             finally:
                 if lb:
                     lb.close()
+
+    def _should_switch(self, lb, silent_since, now):
+        """Follow the sound: the default output changed, or we hear nothing while another output
+        plays (a player or game sent to the Focusrite/headset while Windows' default is elsewhere)."""
+        default = default_id(lb.enum)
+        if self.want is None and default != lb.id:
+            return True
+        if silent_since and now - silent_since > 2:
+            peaks = render_peaks(lb.enum)
+            if peaks.get(lb.id, 0) > 0.003:
+                return True  # Windows' meter hears our device but the stream is dead (device reset): reopen
+            best = max(peaks, key=peaks.get, default=None)
+            if best and best != lb.id and peaks[best] > 0.003:
+                self.want = None if best == default else best
+                return True
+        return False
 
     def snapshot(self):
         return self.analyzer.snapshot()  # analyzer may be replaced when the device rate changes
@@ -245,6 +333,20 @@ def selftest():
     b.push((0.5 * np.sin(2 * np.pi * 8000 * t)).astype(np.float32)); b.update(0.0)
     s = b.snapshot()
     assert s["bands"].index(max(s["bands"])) >= 17 and s["treble"] > s["bass"], "8 kHz is treble"
+    global render_peaks, default_id  # device switching, with fake Windows meters
+    real = render_peaks, default_id
+    class Dead:  # capture stream that delivers nothing
+        id, enum = "X", None
+    try:
+        default_id = lambda enum: "X"
+        render_peaks = lambda enum: {"X": 0.2, "Y": 0.0}
+        e = AudioEngine()
+        assert e._should_switch(Dead(), 100.0, 103.0), "dead stream on a playing device is reopened"
+        assert not e._should_switch(Dead(), 102.0, 103.0), "short silence is fine"
+        render_peaks = lambda enum: {"X": 0.0, "Y": 0.3}
+        assert e._should_switch(Dead(), 100.0, 103.0) and e.want == "Y", "follows the output that has sound"
+    finally:
+        render_peaks, default_id = real
     print("selftest ok")
 
 if __name__ == "__main__":

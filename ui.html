@@ -1122,7 +1122,8 @@ function connect() {
     $("kbInfo").textContent = m.connected ? `Connected · ${Math.round(m.fps)} frames/s` : `Not found${m.error ? " · " + m.error : ""}. Close GK6+ if it is open.`;
     $("fps").textContent = `${Math.round(m.fps)} fps`;
     $("audioDot").className = "dot " + (m.audio_error ? "bad" : m.level > 0.01 ? "ok" : "");
-    $("audioNote").textContent = m.audio_error ? `Audio error: ${m.audio_error}` : m.level > 0.01 ? "Capturing system audio." : "Play some music to see the spectrum.";
+    const dev = m.audio_device ? ` · ${m.audio_device}` : "";
+    $("audioNote").textContent = m.audio_error ? `Audio error: ${m.audio_error}` : m.level > 0.01 ? `Capturing system audio${dev}` : `Play some music to see the spectrum${dev ? " · listening to" + dev.slice(2) : ""}`;
     $("chromaDot").className = "dot " + (m.chroma ? "ok" : "");
     $("chromaText").textContent = m.chroma ? `Chroma: ${m.chroma}` : "Chroma SDK";
     const rgb = JSON.stringify(m.rgb);
